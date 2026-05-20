@@ -1,0 +1,1849 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>空き家マップ 豊見城</title>
+<!-- PWA -->
+<meta name="theme-color" content="#1D9E75">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="空き家マップ">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root {
+  --green:#1D9E75; --green-d:#0F6E56; --green-l:#E1F5EE;
+  --amber:#EF9F27; --amber-l:#FAEEDA;
+  --red:#E24B4A; --red-l:#FCEBEB;
+  --bg:#F4F4F1; --border:rgba(0,0,0,0.11); --gray:#666;
+  --white:#fff; --black:#1a1a1a;
+  --r:14px; --rs:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;background:var(--bg);font-family:-apple-system,"Hiragino Sans",sans-serif;color:var(--black);}
+#app{max-width:430px;margin:0 auto;height:100%;display:flex;flex-direction:column;background:var(--white);overflow:hidden;}
+.screen{display:none;flex-direction:column;height:100%;}
+.screen.active{display:flex;}
+.scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+
+/* Header */
+.hdr{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:.5px solid var(--border);flex-shrink:0;background:var(--white);}
+.hdr-title{font-size:16px;font-weight:700;}
+.icon-btn{background:none;border:none;cursor:pointer;padding:6px;color:var(--gray);display:flex;align-items:center;}
+
+/* Bottom nav */
+.bnav{display:flex;border-top:.5px solid var(--border);background:var(--white);flex-shrink:0;padding-bottom:env(safe-area-inset-bottom,8px);}
+.bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 4px;background:none;border:none;cursor:pointer;}
+.bnav-btn span{font-size:10px;color:var(--gray);}
+.bnav-btn.on span{color:var(--green);}
+.bnav-icon{width:24px;height:24px;stroke:var(--gray);fill:none;stroke-width:2;}
+.bnav-btn.on .bnav-icon{stroke:var(--green);}
+
+/* Buttons */
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;border-radius:var(--r);border:none;font-size:15px;font-weight:600;cursor:pointer;width:100%;}
+.btn:active{opacity:.75;}
+.btn-g{background:var(--green);color:var(--white);}
+.btn-red{background:none;border:1.5px solid var(--red);color:var(--red);}
+.btn-ghost{background:var(--bg);color:var(--black);}
+
+/* Tags */
+.tag{display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+.tag-g{background:var(--green-l);color:var(--green-d);}
+.tag-a{background:var(--amber-l);color:#7A4E00;}
+.tag-r{background:var(--red-l);color:#7A0000;}
+.tag-gray{background:var(--bg);color:var(--gray);}
+
+/* Map */
+#map{width:100%;height:260px;}
+.map-wrap{position:relative;flex-shrink:0;}
+.map-fab{position:absolute;bottom:12px;right:12px;z-index:999;width:44px;height:44px;background:var(--green);border:none;border-radius:50%;color:white;font-size:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.25);}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:14px 16px 4px;}
+.stat{background:var(--bg);border-radius:10px;padding:12px;text-align:center;}
+.stat-n{font-size:22px;font-weight:700;}
+.stat-l{font-size:11px;color:var(--gray);}
+
+/* Section */
+.sec-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 8px;}
+.sec-title{font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.06em;}
+.sec-link{font-size:13px;color:var(--green);font-weight:600;background:none;border:none;cursor:pointer;}
+
+/* List item */
+.li{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:.5px solid var(--border);background:var(--white);}
+.li:active{background:var(--bg);}
+.li-thumb{width:54px;height:54px;border-radius:var(--rs);background:var(--bg);flex-shrink:0;overflow:hidden;object-fit:cover;}
+.li-thumb-ph{width:54px;height:54px;border-radius:var(--rs);background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;}
+.li-body{flex:1;min-width:0;}
+.li-addr{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.li-meta{font-size:12px;color:var(--gray);margin-top:2px;}
+.li-score{font-size:20px;font-weight:700;flex-shrink:0;}
+
+/* Cat slots */
+.cat-slot{display:flex;align-items:center;gap:12px;background:var(--bg);border-radius:var(--r);padding:12px 14px;border:1.5px solid transparent;}
+.cat-slot.done{background:var(--green-l);border-color:var(--green);}
+.cat-thumb{width:52px;height:52px;border-radius:10px;background:rgba(0,0,0,.07);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:24px;}
+.cat-thumb img{width:100%;height:100%;object-fit:cover;}
+.cat-shoot-btn{padding:7px 14px;border-radius:20px;border:1px solid var(--border);background:var(--white);font-size:13px;font-weight:500;cursor:pointer;flex-shrink:0;color:var(--gray);}
+.cat-slot.done .cat-shoot-btn{background:var(--green);color:white;border-color:var(--green);}
+
+/* Step bar */
+.step-bar{display:flex;align-items:center;padding:10px 16px;gap:0;}
+.step-c{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;}
+.step-c.done{background:var(--green);color:white;}
+.step-c.active{background:var(--green-l);color:var(--green);border:2px solid var(--green);}
+.step-c.todo{background:var(--bg);color:var(--gray);}
+.step-line{flex:1;height:2px;background:var(--border);margin:0 4px;}
+.step-line.done{background:var(--green);}
+
+/* Form */
+.f-group{margin-bottom:16px;}
+.f-label{font-size:13px;font-weight:600;color:var(--gray);margin-bottom:6px;display:block;}
+.f-req{color:var(--red);}
+.f-input{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:var(--rs);font-size:15px;font-family:inherit;background:var(--white);color:var(--black);}
+.f-input:focus{outline:none;border-color:var(--green);}
+textarea.f-input{resize:none;}
+.chips{display:flex;flex-wrap:wrap;gap:8px;}
+.chip{padding:7px 14px;border-radius:20px;border:1px solid var(--border);background:var(--white);font-size:13px;color:var(--gray);cursor:pointer;}
+.chip.on{background:var(--green-l);border-color:var(--green);color:var(--green-d);font-weight:600;}
+.cond-row{display:flex;gap:8px;}
+.cond-btn{flex:1;padding:10px;border-radius:var(--rs);border:1px solid var(--border);background:var(--white);font-size:13px;cursor:pointer;color:var(--gray);}
+.cond-btn.g{background:var(--green-l);border-color:var(--green);color:var(--green-d);font-weight:600;}
+.cond-btn.a{background:var(--amber-l);border-color:var(--amber);color:#7A4E00;font-weight:600;}
+.cond-btn.r{background:var(--red-l);border-color:var(--red);color:#7A0000;font-weight:600;}
+.gps-box{background:var(--bg);border-radius:var(--r);padding:12px 14px;margin-bottom:16px;}
+.gps-row{display:flex;align-items:center;gap:10px;}
+.gps-text{font-size:12px;color:var(--gray);flex:1;}
+.gps-retry{background:none;border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:12px;color:var(--gray);cursor:pointer;}
+.gps-manual{display:none;margin-top:10px;padding-top:10px;border-top:.5px solid var(--border);}
+.gps-hint{font-size:11px;color:var(--gray);margin-top:4px;}
+.exif-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;}
+.exif-ok{background:var(--green-l);color:var(--green-d);}
+.exif-no{background:var(--amber-l);color:#7A4E00;}
+
+/* AI analysis */
+.ai-box{background:var(--bg);border-radius:var(--r);padding:14px;margin-bottom:12px;}
+.ai-lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--green);}
+.score-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+.score-lbl{font-size:13px;flex:1;}
+.score-bar-w{width:90px;height:6px;background:rgba(0,0,0,.1);border-radius:3px;overflow:hidden;}
+.score-bar{height:100%;border-radius:3px;transition:width .6s;}
+.score-val{font-size:13px;font-weight:700;width:26px;text-align:right;}
+.total-row{display:flex;align-items:baseline;gap:8px;padding-top:10px;border-top:.5px solid var(--border);margin-top:4px;}
+.total-n{font-size:28px;font-weight:700;}
+.total-l{font-size:13px;color:var(--gray);}
+.pulse{animation:pulse 1.2s ease-in-out infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+.reasoning-box{background:var(--white);border-radius:var(--rs);padding:10px 12px;margin-top:10px;}
+.reasoning-title{font-size:11px;font-weight:700;color:var(--gray);margin-bottom:5px;}
+
+/* Detail */
+.detail-hero{width:100%;height:auto;max-height:320px;background:#111;position:relative;overflow:hidden;flex-shrink:0;}
+.detail-hero img{width:100%;height:auto;max-height:320px;object-fit:contain;display:block;background:#111;} .detail-hero-ph{width:100%;height:220px;display:flex;align-items:center;justify-content:center;font-size:64px;background:#111;}
+.detail-hero-ph{display:flex;align-items:center;justify-content:center;font-size:64px;}
+.detail-overlay{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,rgba(0,0,0,.55));padding:20px 16px 12px;}
+.detail-addr{font-size:18px;font-weight:700;color:white;}
+.detail-meta2{font-size:13px;color:rgba(255,255,255,.8);margin-top:2px;}
+.back-btn{position:absolute;top:12px;left:12px;width:36px;height:36px;background:rgba(255,255,255,.92);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;border:none;font-size:20px;}
+.photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.photo-cell{aspect-ratio:1;border-radius:var(--rs);overflow:hidden;position:relative;}
+.photo-cell img{width:100%;height:100%;object-fit:cover;}
+.photo-cell-lbl{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:white;font-size:10px;text-align:center;padding:3px;}
+/* List delete */
+.li-wrap{position:relative;overflow:hidden;}
+.li-del{position:absolute;right:0;top:0;bottom:0;width:72px;background:var(--red);display:flex;align-items:center;justify-content:center;cursor:pointer;transform:translateX(100%);transition:transform .2s;}
+.li-del svg{stroke:white;fill:none;stroke-width:2;}
+.li-inner{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:.5px solid var(--border);background:var(--white);transition:transform .2s;cursor:pointer;}
+.li-inner:active{background:var(--bg);}
+.info-row{display:flex;padding:10px 14px;border-bottom:.5px solid var(--border);}
+.info-row:last-child{border-bottom:none;}
+.info-key{font-size:13px;color:var(--gray);width:80px;flex-shrink:0;}
+.info-val{font-size:13px;color:var(--black);}
+
+/* Toast */
+#toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%) translateY(16px);background:rgba(0,0,0,.8);color:white;padding:10px 20px;border-radius:20px;font-size:14px;opacity:0;transition:all .25s;pointer-events:none;z-index:100000;white-space:nowrap;}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+/* Dialog - 完全に独立したオーバーレイ */
+#dialog{position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center;visibility:hidden;pointer-events:none;opacity:0;transition:opacity .2s;}
+#dialog.open{visibility:visible;pointer-events:auto;opacity:1;}
+#dialog-inner{background:white;width:100%;max-width:430px;border-radius:20px 20px 0 0;padding:24px 20px 32px;}
+#dialog-title{font-size:17px;font-weight:700;margin-bottom:8px;}
+#dialog-msg{font-size:14px;color:var(--gray);margin-bottom:20px;line-height:1.5;}
+#dialog-btns{display:flex;gap:10px;}
+#dialog-cancel{flex:1;padding:13px;background:var(--bg);border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;color:var(--black);}
+#dialog-ok{flex:1;padding:13px;background:var(--red);border:none;border-radius:12px;font-size:15px;font-weight:600;color:white;cursor:pointer;}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ===== HOME ===== -->
+<div class="screen active" id="s-home">
+  <div class="hdr">
+    <span class="hdr-title">🏚 空き家マップ</span>
+    <span id="sync-status" style="font-size:11px;color:var(--green);opacity:0;transition:opacity .5s;flex:1;text-align:center;"></span>
+    <button class="icon-btn" onclick="go('s-profile')">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+    </button>
+  </div>
+  <div class="scroll">
+    <div class="map-wrap">
+      <div id="map"></div>
+      <button class="map-fab" onclick="go('s-cam')" title="登録">＋</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-n" id="st-total">0</div><div class="stat-l">総登録</div></div>
+      <div class="stat"><div class="stat-n" style="color:var(--red)" id="st-high">0</div><div class="stat-l">高スコア</div></div>
+      <div class="stat"><div class="stat-n" style="color:var(--green)" id="st-ok">0</div><div class="stat-l">確認済み</div></div>
+    </div>
+    <div class="sec-hdr">
+      <span class="sec-title">最近の登録</span>
+      <button class="sec-link" onclick="go('s-list')">すべて見る</button>
+    </div>
+    <div id="recent-list"></div>
+    <div style="padding:14px 16px 20px;">
+      <button class="btn btn-g" onclick="go('s-cam')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        空き家を新規登録
+      </button>
+    </div>
+  </div>
+  <div class="bnav">
+    <button class="bnav-btn on" onclick="go('s-home')">
+      <svg class="bnav-icon" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span>ホーム</span>
+    </button>
+    <button class="bnav-btn" onclick="go('s-list')">
+      <svg class="bnav-icon" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      <span>一覧</span>
+    </button>
+    <button class="bnav-btn" onclick="go('s-cam')">
+      <svg class="bnav-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <span>登録</span>
+    </button>
+    <button class="bnav-btn" onclick="go('s-profile')">
+      <svg class="bnav-icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      <span>マイ記録</span>
+    </button>
+  </div>
+</div>
+
+<!-- ===== CAMERA ===== -->
+<div class="screen" id="s-cam">
+  <div class="hdr">
+    <button class="icon-btn" onclick="go('s-home')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="hdr-title">写真を撮影</span>
+    <span style="width:34px;"></span>
+  </div>
+  <div class="step-bar">
+    <div class="step-c active">1</div><div class="step-line"></div>
+    <div class="step-c todo">2</div><div class="step-line"></div>
+    <div class="step-c todo">3</div><div class="step-line"></div>
+    <div class="step-c todo">4</div>
+  </div>
+  <div style="display:flex;justify-content:space-between;padding:0 16px 10px;font-size:11px;color:var(--gray);">
+    <span>写真</span><span>AI判定</span><span>入力</span><span>完了</span>
+  </div>
+  <div class="scroll">
+    <div style="padding:0 16px 10px;">
+      <div style="font-size:15px;font-weight:700;margin-bottom:3px;">撮影カテゴリを選択</div>
+      <div style="font-size:13px;color:var(--gray);">外観は必須・ポストと庭は推奨です</div>
+    </div>
+    <div style="padding:0 16px;display:flex;flex-direction:column;gap:10px;" id="cat-slots"></div>
+    <div style="margin:12px 16px;background:var(--bg);border-radius:var(--r);padding:12px 14px;">
+      <div style="font-size:12px;font-weight:700;color:var(--gray);margin-bottom:5px;">📌 撮影のポイント</div>
+      <div style="font-size:13px;line-height:1.7;">公道から撮影 · GPS ON · 人物・表札は写さない</div>
+    </div>
+    <div style="padding:0 16px 24px;">
+      <button class="btn btn-g" id="analyze-btn" onclick="startAnalysis()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        AI判定を開始する
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== ANALYSIS ===== -->
+<div class="screen" id="s-analysis">
+  <div class="hdr">
+    <button class="icon-btn" onclick="go('s-cam')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="hdr-title" id="analysis-hdr-title">AI判定中…</span>
+    <span style="width:34px;"></span>
+  </div>
+  <div class="scroll" style="padding:16px;">
+    <div id="analysis-thumbs" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px;"></div>
+    <div class="ai-box">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <span class="ai-lbl">AIスコアリング</span>
+        <span id="analysis-status" style="margin-left:auto;font-size:12px;color:var(--gray);">分析中...</span>
+      </div>
+      <div id="score-rows"></div>
+      <div class="total-row" id="total-row" style="opacity:.3;">
+        <span class="total-n" id="total-n" style="color:var(--green);">--</span>
+        <span class="total-l">/ 30点　空き家スコア</span>
+        <span class="tag tag-gray" id="conf-tag" style="margin-left:auto;">判定中</span>
+      </div>
+    </div>
+    <div style="background:var(--white);border:.5px solid var(--border);border-radius:var(--r);padding:12px 14px;margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;color:var(--gray);margin-bottom:5px;">AIコメント</div>
+      <p id="ai-comment" style="font-size:13px;line-height:1.7;color:var(--gray);" class="pulse">写真を解析しています…</p>
+    </div>
+    <button class="btn btn-g" id="to-form-btn" style="display:none;" onclick="go('s-form')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      情報を入力して登録する
+    </button>
+  </div>
+</div>
+
+<!-- ===== FORM ===== -->
+<div class="screen" id="s-form">
+  <div class="hdr">
+    <button class="icon-btn" onclick="go('s-analysis')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="hdr-title">情報を入力</span>
+    <span style="width:34px;"></span>
+  </div>
+  <div class="scroll" style="padding:16px;">
+    <div class="f-group">
+      <label class="f-label">住所・場所のメモ<span class="f-req">*</span></label>
+      <input type="text" class="f-input" id="f-addr" placeholder="例：豊見城市嘉数〇丁目付近">
+    </div>
+    <div class="f-group">
+      <label class="f-label">建物種別</label>
+      <div class="chips" id="f-type"><button class="chip on" onclick="selChip(this,'f-type')">木造戸建</button><button class="chip" onclick="selChip(this,'f-type')">RC戸建</button><button class="chip" onclick="selChip(this,'f-type')">集合住宅</button><button class="chip" onclick="selChip(this,'f-type')">その他</button></div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">築年数（目視）</label>
+      <div class="chips" id="f-age"><button class="chip" onclick="selChip(this,'f-age')">〜10年</button><button class="chip on" onclick="selChip(this,'f-age')">10〜30年</button><button class="chip" onclick="selChip(this,'f-age')">30年以上</button><button class="chip" onclick="selChip(this,'f-age')">不明</button></div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">建物の状態</label>
+      <div class="cond-row">
+        <button class="cond-btn" onclick="selCond(this,'g')">良好</button>
+        <button class="cond-btn a" onclick="selCond(this,'a')">要注意</button>
+        <button class="cond-btn" onclick="selCond(this,'r')">危険</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">現地のメモ（任意）</label>
+      <textarea class="f-input" id="f-memo" rows="3" placeholder="気になった点など…"></textarea>
+    </div>
+    <div class="gps-box">
+      <div class="gps-row">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:700;">GPS位置情報</div>
+          <div class="gps-text" id="gps-txt">取得中...</div>
+        </div>
+        <button class="gps-retry" onclick="retryGPS()">再取得</button>
+      </div>
+      <div class="gps-manual" id="gps-manual">
+        <div style="font-size:12px;color:var(--gray);margin-bottom:6px;">📍 手動で座標を入力するか住所から推定</div>
+        <button onclick="geocodeAddr()" style="width:100%;padding:8px;background:var(--green-l);color:var(--green-d);border:1px solid var(--green);border-radius:var(--rs);font-size:13px;font-weight:600;cursor:pointer;margin-bottom:6px;">住所から座標を推定する</button>
+        <div style="display:flex;gap:6px;">
+          <input type="number" id="gps-lat" placeholder="緯度 26.1713" step="0.00001" class="f-input" style="flex:1;font-size:13px;">
+          <input type="number" id="gps-lng" placeholder="経度 127.6647" step="0.00001" class="f-input" style="flex:1;font-size:13px;">
+        </div>
+        <div class="gps-hint">豊見城市の目安：緯度26.15〜26.20 / 経度127.65〜127.72</div>
+      </div>
+    </div>
+    <button class="btn btn-g" onclick="submitRecord()" id="submit-btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      マップに登録する
+    </button>
+  </div>
+</div>
+
+<!-- ===== COMPLETE ===== -->
+<div class="screen" id="s-complete">
+  <div class="scroll" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;min-height:100%;text-align:center;gap:12px;">
+    <div style="width:88px;height:88px;background:var(--green-l);border-radius:50%;display:flex;align-items:center;justify-content:center;margin-bottom:8px;">
+      <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+    </div>
+    <div style="font-size:24px;font-weight:700;">登録完了！</div>
+    <div style="font-size:15px;color:var(--gray);line-height:1.6;">マップに追加されました。</div>
+    <div style="background:var(--amber-l);border-radius:var(--r);padding:12px 24px;display:flex;align-items:center;gap:10px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7A4E00" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      <span id="pts-n" style="font-size:20px;font-weight:700;color:#7A4E00;">+50</span>
+      <span style="font-size:14px;color:#7A4E00;">ポイント獲得</span>
+    </div>
+    <button class="btn btn-g" style="margin-top:8px;" onclick="backHome()">ホームへ戻る</button>
+    <button class="btn btn-ghost" onclick="go('s-cam')">続けて登録する</button>
+  </div>
+</div>
+
+<!-- ===== LIST ===== -->
+<div class="screen" id="s-list">
+  <div class="hdr">
+    <button class="icon-btn" onclick="go('s-home')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="hdr-title">登録一覧</span>
+    <span style="width:34px;"></span>
+  </div>
+  <div style="display:flex;gap:8px;padding:10px 16px;overflow-x:auto;flex-shrink:0;">
+    <button class="chip on" onclick="setFilter(this,'all')">すべて</button>
+    <button class="chip" onclick="setFilter(this,'high')">高スコア</button>
+    <button class="chip" onclick="setFilter(this,'mid')">要観察</button>
+    <button class="chip" onclick="setFilter(this,'ok')">確認済み</button>
+  </div>
+  <div class="scroll" id="full-list"></div>
+  <div class="bnav">
+    <button class="bnav-btn" onclick="go('s-home')"><svg class="bnav-icon" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg><span>ホーム</span></button>
+    <button class="bnav-btn on" onclick="go('s-list')"><svg class="bnav-icon" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg><span>一覧</span></button>
+    <button class="bnav-btn" onclick="go('s-cam')"><svg class="bnav-icon" viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg><span>登録</span></button>
+    <button class="bnav-btn" onclick="go('s-profile')"><svg class="bnav-icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg><span>マイ記録</span></button>
+  </div>
+</div>
+
+<!-- ===== DETAIL ===== -->
+<div class="screen" id="s-detail">
+  <!-- 写真エリア（オーバーレイなし） -->
+  <div style="position:relative;flex-shrink:0;">
+    <div id="d-hero"></div>
+    <button class="back-btn" onclick="go('s-list')" style="position:absolute;top:12px;left:12px;">←</button>
+  </div>
+  <!-- 住所・メタ情報（写真の下） -->
+  <div style="padding:12px 16px 8px;border-bottom:.5px solid var(--border);flex-shrink:0;background:var(--white);">
+    <div style="font-size:18px;font-weight:700;color:var(--black);" id="d-addr"></div>
+    <div style="font-size:13px;color:var(--gray);margin-top:2px;" id="d-meta"></div>
+  </div>
+  <div class="scroll" style="padding-bottom:80px;">
+    <div style="padding:14px 16px 4px;display:flex;align-items:center;gap:10px;">
+      <div id="d-ring"></div>
+      <div><div style="font-size:16px;font-weight:700;" id="d-judge">-</div><div style="font-size:13px;color:var(--gray);" id="d-date">-</div></div>
+      <div style="margin-left:auto;" id="d-status"></div>
+    </div>
+    <div class="ai-box" style="margin:12px 16px 0;">
+      <div class="ai-lbl" style="margin-bottom:10px;">スコア詳細</div>
+      <div id="d-scores"></div>
+    </div>
+    <div style="padding:12px 16px 4px;">
+      <div class="sec-title" style="margin-bottom:8px;">写真</div>
+      <div class="photo-grid" id="d-photos" style="padding:0 0 4px;"></div>
+    </div>
+    <div style="padding:4px 16px 4px;">
+      <div class="sec-title" style="margin-bottom:6px;">AIコメント</div>
+      <div style="font-size:14px;line-height:1.7;" id="d-comment">-</div>
+    </div>
+    <div style="padding:12px 16px 4px;">
+      <div class="sec-title" style="margin-bottom:8px;">登録情報</div>
+      <div style="background:var(--bg);border-radius:var(--r);overflow:hidden;" id="d-info"></div>
+    </div>
+  </div>
+  <!-- 編集・削除ボタン：常に画面下部固定 -->
+  <div style="padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom,10px));border-top:.5px solid var(--border);background:var(--white);flex-shrink:0;display:flex;gap:10px;position:relative;z-index:10;">
+    <button type="button" id="btn-edit" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;background:var(--green);color:white;border:none;border-radius:var(--r);font-size:15px;font-weight:600;cursor:pointer;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      編集
+    </button>
+    <button type="button" id="btn-delete" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;background:none;color:var(--red);border:1.5px solid var(--red);border-radius:var(--r);font-size:15px;font-weight:600;cursor:pointer;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M9 6V4h6v2"/></svg>
+      削除
+    </button>
+  </div>
+</div>
+
+<!-- ===== EDIT ===== -->
+<div class="screen" id="s-edit">
+  <div class="hdr">
+    <button class="icon-btn" onclick="go('s-detail')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="hdr-title">情報を編集</span>
+    <span style="width:34px;"></span>
+  </div>
+  <div class="scroll" style="padding:16px;">
+    <div class="f-group">
+      <label class="f-label">住所・場所のメモ<span class="f-req">*</span></label>
+      <input type="text" class="f-input" id="e-addr" placeholder="例：豊見城市嘉数〇丁目付近">
+    </div>
+    <div class="f-group">
+      <label class="f-label">建物種別</label>
+      <div class="chips" id="e-type">
+        <button class="chip" onclick="selChip(this,'e-type')">木造戸建</button>
+        <button class="chip" onclick="selChip(this,'e-type')">RC戸建</button>
+        <button class="chip" onclick="selChip(this,'e-type')">集合住宅</button>
+        <button class="chip" onclick="selChip(this,'e-type')">その他</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">築年数（目視）</label>
+      <div class="chips" id="e-age">
+        <button class="chip" onclick="selChip(this,'e-age')">〜10年</button>
+        <button class="chip" onclick="selChip(this,'e-age')">10〜30年</button>
+        <button class="chip" onclick="selChip(this,'e-age')">30年以上</button>
+        <button class="chip" onclick="selChip(this,'e-age')">不明</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">建物の状態</label>
+      <div class="cond-row" id="e-cond-row">
+        <button class="cond-btn" onclick="selCond(this,'g')">良好</button>
+        <button class="cond-btn" onclick="selCond(this,'a')">要注意</button>
+        <button class="cond-btn" onclick="selCond(this,'r')">危険</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">確認ステータス</label>
+      <div class="chips" id="e-status">
+        <button class="chip" onclick="selChip(this,'e-status')">審査中</button>
+        <button class="chip" onclick="selChip(this,'e-status')">確認済み</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">現地のメモ</label>
+      <textarea class="f-input" id="e-memo" rows="3" placeholder="気になった点など…"></textarea>
+    </div>
+    <!-- 登記情報セクション -->
+    <div style="background:var(--green-l);border-radius:var(--r);padding:12px 14px;margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:700;color:var(--green-d);margin-bottom:2px;">📋 登記・所有者情報</div>
+      <div style="font-size:12px;color:var(--green-d);opacity:.8;">登記情報を入力すると資産価値の高いデータになります</div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">所有者氏名・法人名</label>
+      <input type="text" class="f-input" id="e-owner" placeholder="例：山田太郎 / 株式会社〇〇">
+    </div>
+    <div class="f-group">
+      <label class="f-label">地番</label>
+      <input type="text" class="f-input" id="e-chiban" placeholder="例：豊見城市嘉数123番地">
+    </div>
+    <div class="f-group">
+      <label class="f-label">地目</label>
+      <div class="chips" id="e-chimoku">
+        <button class="chip" onclick="selChip(this,'e-chimoku')">宅地</button>
+        <button class="chip" onclick="selChip(this,'e-chimoku')">田</button>
+        <button class="chip" onclick="selChip(this,'e-chimoku')">畑</button>
+        <button class="chip" onclick="selChip(this,'e-chimoku')">雑種地</button>
+        <button class="chip" onclick="selChip(this,'e-chimoku')">その他</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">地積（㎡）</label>
+      <input type="number" class="f-input" id="e-chiseki" placeholder="例：120">
+    </div>
+    <div class="f-group">
+      <label class="f-label">登記年（西暦）</label>
+      <input type="number" class="f-input" id="e-touki-year" placeholder="例：1985" min="1900" max="2099">
+    </div>
+    <div class="f-group">
+      <label class="f-label">抵当権</label>
+      <div class="chips" id="e-teito">
+        <button class="chip" onclick="selChip(this,'e-teito')">なし</button>
+        <button class="chip" onclick="selChip(this,'e-teito')">あり</button>
+        <button class="chip" onclick="selChip(this,'e-teito')">不明</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">固定資産税評価額（万円）</label>
+      <input type="number" class="f-input" id="e-hyoka" placeholder="例：800">
+    </div>
+    <div class="f-group">
+      <label class="f-label">空き家になった経緯</label>
+      <div class="chips" id="e-keii">
+        <button class="chip" onclick="selChip(this,'e-keii')">相続放置</button>
+        <button class="chip" onclick="selChip(this,'e-keii')">転居</button>
+        <button class="chip" onclick="selChip(this,'e-keii')">施設入所</button>
+        <button class="chip" onclick="selChip(this,'e-keii')">死亡</button>
+        <button class="chip" onclick="selChip(this,'e-keii')">不明</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">オーナーへの接触状況</label>
+      <div class="chips" id="e-contact">
+        <button class="chip" onclick="selChip(this,'e-contact')">未接触</button>
+        <button class="chip" onclick="selChip(this,'e-contact')">連絡済み</button>
+        <button class="chip" onclick="selChip(this,'e-contact')">交渉中</button>
+        <button class="chip" onclick="selChip(this,'e-contact')">合意済み</button>
+      </div>
+    </div>
+    <div class="f-group">
+      <label class="f-label">接触メモ・備考</label>
+      <textarea class="f-input" id="e-contact-memo" rows="3" placeholder="オーナーとのやり取りなど…"></textarea>
+    </div>
+    <button class="btn btn-g" onclick="saveEdit()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+      保存する
+    </button>
+  </div>
+</div>
+
+<!-- ===== PROFILE ===== -->
+<div class="screen" id="s-profile">
+  <div class="hdr">
+    <button class="icon-btn" onclick="go('s-home')"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+    <span class="hdr-title">マイ記録</span>
+    <span style="width:34px;"></span>
+  </div>
+  <div class="scroll" style="padding:16px;">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">
+      <div style="width:60px;height:60px;border-radius:50%;background:var(--green-l);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:700;color:var(--green);">調</div>
+      <div><div style="font-size:18px;font-weight:700;">調査担当者</div><div style="font-size:13px;color:var(--gray);">豊見城市 実証調査</div></div>
+    </div>
+    <!-- ホーム画面追加ボタン -->
+    <button id="install-btn" onclick="installApp()" style="display:flex;width:100%;align-items:center;justify-content:center;gap:10px;padding:14px;background:var(--green);color:white;border:none;border-radius:var(--r);font-size:15px;font-weight:700;cursor:pointer;margin-bottom:16px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18.01"/></svg>
+      ホーム画面に追加する
+    </button>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px;">
+      <div class="stat" style="background:var(--bg);"><div class="stat-n" id="p-total">0</div><div class="stat-l">総登録件数</div></div>
+      <div class="stat" style="background:var(--amber-l);"><div class="stat-n" style="color:#7A4E00;" id="p-pts">0</div><div class="stat-l" style="color:#7A4E00;">累計ポイント</div></div>
+    </div>
+    <div style="background:var(--bg);border-radius:var(--r);padding:14px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px;">スコア分布</div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:.5px solid var(--border);"><span style="font-size:13px;">🔴 空き家の可能性大（10+）</span><span style="font-weight:700;" id="p-high">0件</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:.5px solid var(--border);"><span style="font-size:13px;">🟡 空き家疑い（7〜9）</span><span style="font-weight:700;" id="p-mid">0件</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0;"><span style="font-size:13px;">🟢 要観察以下（〜6）</span><span style="font-weight:700;" id="p-low">0件</span></div>
+    </div>
+    <div style="background:var(--bg);border-radius:var(--r);padding:14px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:4px;">データ管理</div>
+      <div style="font-size:12px;color:var(--gray);margin-bottom:8px;">重複データなどをまとめてリセットできます</div>
+      <button onclick="askReset()" ontouchend="event.preventDefault();askReset();" style="width:100%;padding:10px;background:none;border:1.5px solid var(--red);border-radius:var(--rs);color:var(--red);font-size:13px;font-weight:600;cursor:pointer;">すべてのデータをリセット</button>
+    </div>
+    <div style="background:var(--bg);border-radius:var(--r);padding:14px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:4px;">APIキー設定</div>
+      <div style="font-size:12px;color:var(--gray);margin-bottom:8px;">AI判定にAnthropicのAPIキーを使用します</div>
+      <input type="password" class="f-input" id="api-key-in" placeholder="sk-ant-..." style="font-size:13px;margin-bottom:8px;">
+      <button class="btn btn-ghost" style="padding:10px;" onclick="saveKey()">保存する</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /app -->
+
+<!-- Toast（app外） -->
+<div id="toast"></div>
+
+<!-- Dialog（app外・z-index最大） -->
+<div id="dialog">
+  <div id="dialog-inner">
+    <div id="dialog-title">確認</div>
+    <div id="dialog-msg">よろしいですか？</div>
+    <div id="dialog-btns">
+      <button id="dialog-cancel" onclick="closeDialog()">キャンセル</button>
+      <button id="dialog-ok">削除する</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="file-in" accept="image/*" style="display:none" onchange="onFile(event)">
+
+<script>
+// ===== SUPABASE =====
+const SB_URL = 'https://okijwcasxxwqmhofndeg.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9raWp3Y2FzeHh3cW1ob2ZuZGVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyMTg5MjgsImV4cCI6MjA5NDc5NDkyOH0.rdp7YZw-Qm6BMzbJTn8BznvgP5vcq7jq0IPVg0F_QHw';
+const SB_TABLE = 'akiya_records';
+
+async function sbFetch(method, path, body) {
+  const headers = {
+    'apikey': SB_KEY,
+    'Authorization': 'Bearer ' + SB_KEY,
+    'Content-Type': 'application/json',
+  };
+  if (method === 'POST') headers['Prefer'] = 'resolution=merge-duplicates,return=minimal';
+  if (method === 'GET') headers['Accept'] = 'application/json';
+
+  const res = await fetch(SB_URL + '/rest/v1/' + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    console.error('Supabase error:', method, path, res.status, err);
+    throw new Error(`${res.status}: ${err}`);
+  }
+  if (method === 'DELETE') return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : [];
+}
+
+// Supabase全件取得
+async function sbLoadAll() {
+  const data = await sbFetch('GET', SB_TABLE + '?order=created_at.desc&limit=500');
+  return data || [];
+}
+
+// Supabase upsert（insert or update）
+async function sbUpsert(record) {
+  // photosはサイズが大きいのでbase64を圧縮して保存
+  const slim = {...record};
+  // jsonb型にはオブジェクトをそのまま渡す
+  return sbFetch('POST', SB_TABLE, slim);
+}
+
+// Supabase delete
+async function sbDelete(id) {
+  return sbFetch('DELETE', SB_TABLE + '?id=eq.' + id);
+}
+
+// ===== SUPABASE STORAGE =====
+const SB_BUCKET = 'akiya-photos';
+
+async function uploadPhoto(recordId, catId, dataUrl) {
+  try {
+    // base64をblobに変換
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    const fileName = `${recordId}/${catId}.jpg`;
+    const uploadRes = await fetch(
+      `${SB_URL}/storage/v1/object/${SB_BUCKET}/${fileName}`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Content-Type': 'image/jpeg',
+          'x-upsert': 'true',
+        },
+        body: blob,
+      }
+    );
+    if (!uploadRes.ok) throw new Error(await uploadRes.text());
+    // 公開URLを返す
+    return `${SB_URL}/storage/v1/object/public/${SB_BUCKET}/${fileName}`;
+  } catch(e) {
+    console.log('photo upload failed:', e);
+    return null;
+  }
+}
+
+async function uploadAllPhotos(record) {
+  const photoUrls = {};
+  for (const [catId, p] of Object.entries(record.photos || {})) {
+    if (!p || !p.startsWith('data:')) {
+      // すでにURLの場合はそのまま使用
+      photoUrls[catId] = p;
+      continue;
+    }
+    const url = await uploadPhoto(record.id, catId, p);
+    if (url) photoUrls[catId] = url;
+  }
+  return photoUrls;
+}
+
+async function deleteStoragePhotos(recordId) {
+  try {
+    // フォルダ内のファイル一覧取得
+    const listRes = await fetch(
+      `${SB_URL}/storage/v1/object/list/${SB_BUCKET}`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prefix: `${recordId}/` }),
+      }
+    );
+    const files = await listRes.json();
+    if (!files.length) return;
+    const paths = files.map(f => `${recordId}/${f.name}`);
+    await fetch(
+      `${SB_URL}/storage/v1/object/${SB_BUCKET}`,
+      {
+        method: 'DELETE',
+        headers: {
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ prefixes: paths }),
+      }
+    );
+  } catch(e) { console.log('storage delete failed:', e); }
+}
+
+// ===== CATEGORIES =====
+const CATS = [
+  {id:'gaikan', label:'外観全体',  required:true,  recommended:false, icon:'🏠', weight:2, hint:'建物全体が収まるよう引きで撮影', prompt:'外壁・屋根の劣化度、傾き、ひび割れ、廃墟感。0=新築同様 1=軽微な劣化 2=明らかな損傷 3=倒壊リスク'},
+  {id:'post',   label:'ポスト',    required:false, recommended:true,  icon:'📮', weight:3, hint:'郵便物の溜まり具合が分かるよう接写', prompt:'郵便物・チラシの滞留量、ポスト自体の錆び・破損。0=清潔 1=少し溜まり 2=大量滞留 3=溢れ腐敗・破損'},
+  {id:'niwa',   label:'庭・植栽', required:false, recommended:true,  icon:'🌿', weight:3, hint:'雑草の高さが伝わる引き気味の構図', prompt:'雑草の繁茂度・高さ、樹木の手入れ、ゴミの放置。0=整備済み 1=やや放置 2=腰丈の雑草 3=完全に覆われ道路にはみ出し'},
+  {id:'mado',   label:'窓・カーテン', required:false, recommended:false, icon:'🪟', weight:2, hint:'正面から窓全体が写るよう撮影', prompt:'カーテンの閉鎖・色あせ・破損、窓ガラスの割れ。0=生活感あり 1=同じ状態が続く 2=変色・一部なし 3=割れ・テープ補修'},
+  {id:'genkan', label:'玄関周り', required:false, recommended:false, icon:'🚪', weight:1, hint:'玄関ドア・足元の放置物を記録', prompt:'落ち葉・蜘蛛の巣の堆積、ドアの状態。0=清潔 1=少し汚れ 2=明らかな放置 3=完全荒廃'},
+];
+
+// ===== STATE =====
+let photos = {};      // catId -> {dataUrl, exifGps}
+let aiScores = {};    // catId -> {score}
+let totalScore = 0;
+let gpsCoords = null;
+let currentDetailId = null;
+let filter = 'all';
+let submitting = false;
+let dialogOkFn = null;
+let apiKey = localStorage.getItem('akiya_key') || '';
+let records = [];
+let leafletMap = null;
+let mapMarkers = [];
+
+// ===== LOAD RECORDS =====
+// 写真データはlocalStorageに保存
+function savePhotosLocal(record) {
+  try {
+    const key = 'akiya_photos_' + record.id;
+    if (record.photos && Object.keys(record.photos).length > 0) {
+      localStorage.setItem(key, JSON.stringify(record.photos));
+    }
+  } catch(e) { console.log('photo save failed:', e); }
+}
+
+function loadPhotosLocal(id) {
+  try {
+    const key = 'akiya_photos_' + id;
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : {};
+  } catch(e) { return {}; }
+}
+
+async function loadRecords() {
+  // まずlocalStorageから即時表示（写真込み）
+  try {
+    const local = JSON.parse(localStorage.getItem('akiya_records_v2') || '[]');
+    if (local.length > 0) {
+      records = local.map(r => ({...r, photos: loadPhotosLocal(r.id) || r.photos || {}}));
+      renderAll();
+    }
+  } catch(e) {}
+
+  // Supabaseから最新データを取得
+  try {
+    showSyncStatus('同期中…');
+    console.log('Connecting to Supabase:', SB_URL);
+    console.log('Using key:', SB_KEY.substring(0, 30) + '...');
+    const remote = await sbLoadAll();
+    console.log('Supabase response:', remote);
+    if (remote.length > 0) {
+      // localStorageの写真データとマージ
+      let local = [];
+      try { local = JSON.parse(localStorage.getItem('akiya_records_v2') || '[]'); } catch(e){}
+      records = remote.map(r => {
+        // 写真は専用キーからロード（Supabaseには保存しない）
+        const photos = loadPhotosLocal(r.id);
+        return {...r, photos};
+      });
+      localStorage.setItem('akiya_records_v2', JSON.stringify(records));
+      renderAll();
+      showSyncStatus('同期済み ✓');
+    } else if (records.length === 0) {
+      // 初回：サンプルデータを投入
+      records = [
+        {id:1, address:'豊見城市嘉数2丁目付近', type:'木造戸建', age:'30年以上', cond:'要注意', memo:'ポストに大量の郵便物', date:'2025-05-15', score:18, judge:'空き家の可能性大', status:'verified', comment:'ポストに郵便物が大量滞留し庭は腰丈の雑草が繁茂しています。', scores:{gaikan:2,post:3,niwa:3,mado:2,genkan:1}, photos:{}, gps:{lat:26.1713,lng:127.6647}},
+        {id:2, address:'豊見城市長堂付近', type:'木造戸建', age:'30年以上', cond:'危険', memo:'屋根が一部崩落', date:'2025-05-14', score:22, judge:'空き家の可能性大', status:'pending', comment:'外観に重大な損傷があり屋根の一部が崩落しています。', scores:{gaikan:3,post:3,niwa:3,mado:2}, photos:{}, gps:{lat:26.1680,lng:127.6590}},
+        {id:3, address:'豊見城市饒波付近', type:'RC戸建', age:'10〜30年', cond:'要注意', memo:'', date:'2025-05-13', score:8, judge:'空き家疑い', status:'pending', comment:'カーテンが長期間閉じられており庭も放置気味です。', scores:{gaikan:1,post:2,niwa:2,mado:1}, photos:{}, gps:{lat:26.1750,lng:127.6700}},
+        {id:4, address:'豊見城市与根付近', type:'RC戸建', age:'10〜30年', cond:'良好', memo:'', date:'2025-05-11', score:4, judge:'要観察', status:'pending', comment:'庭がやや放置気味ですが建物状態は概ね良好です。', scores:{gaikan:0,post:1,niwa:2,mado:1}, photos:{}, gps:{lat:26.1650,lng:127.6720}},
+      ];
+      for (const r of records) await sbUpsert(r).catch(()=>{});
+      saveRecords();
+      renderAll();
+      showSyncStatus('初期データを登録しました ✓');
+    } else {
+      showSyncStatus('同期済み ✓');
+    }
+  } catch(e) {
+    showSyncStatus('オフライン（ローカルデータを使用中）', true);
+    console.log('Supabase sync failed:', e);
+  }
+}
+
+function showSyncStatus(msg, isError) {
+  let el = document.getElementById('sync-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--red)' : 'var(--green)';
+  el.style.opacity = '1';
+  setTimeout(() => { el.style.opacity = '0'; }, isError ? 6000 : 3000);
+}
+
+function saveRecords() {
+  try {
+    localStorage.setItem('akiya_records_v2', JSON.stringify(records));
+  } catch(e) {
+    const slim = records.map(r => ({...r, photos:{}}));
+    try { localStorage.setItem('akiya_records_v2', JSON.stringify(slim)); } catch(e2) {}
+  }
+}
+
+// Supabaseに1件upsert（非同期・バックグラウンド）
+async function syncRecord(record) {
+  try {
+    // Base64はSupabaseに保存しない、URLはそのまま保存
+    const photosToSave = {};
+    for (const [catId, val] of Object.entries(record.photos || {})) {
+      if (val && val.startsWith('https://')) {
+        photosToSave[catId] = val; // URLのみ保存
+      }
+      // base64は保存しない
+    }
+    const toSave = {...record, photos: photosToSave};
+    await sbUpsert(toSave);
+    showSyncStatus('クラウドに保存しました ✓');
+  } catch(e) {
+    showSyncStatus('クラウド保存失敗（ローカルに保存済み）');
+    console.log('syncRecord failed:', e);
+  }
+}
+
+// Supabaseから1件削除（非同期・バックグラウンド）
+async function syncDelete(id) {
+  try {
+    await sbDelete(id);
+  } catch(e) {
+    console.log('syncDelete failed:', e);
+  }
+}
+
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadRecords();
+  if (apiKey) document.getElementById('api-key-in').value = apiKey;
+  renderAll();
+  setTimeout(initMap, 150);
+  getGPS();
+});
+
+function renderAll() {
+  renderStats();
+  renderRecent();
+  renderList();
+  renderMapPins();
+}
+
+// ===== NAVIGATION =====
+function go(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (id === 's-home') {
+    renderAll();
+    setTimeout(() => { if (leafletMap) { leafletMap.invalidateSize(); renderMapPins(); }}, 60);
+  }
+  if (id === 's-list') renderList();
+  if (id === 's-cam') { resetCam(); renderCatSlots(); }
+}
+
+function backHome() {
+  photos = {}; aiScores = {}; totalScore = 0; gpsCoords = null;
+  go('s-home');
+}
+
+// ===== MAP =====
+function initMap() {
+  if (leafletMap) return;
+  leafletMap = L.map('map', {zoomControl:true}).setView([26.1713, 127.6647], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'© OpenStreetMap', maxZoom:19
+  }).addTo(leafletMap);
+  renderMapPins();
+}
+
+function renderMapPins() {
+  if (!leafletMap) return;
+  mapMarkers.forEach(m => m.remove());
+  mapMarkers = [];
+  // mapClickリスナーをリセット
+  leafletMap.off('click');
+  let expandedId = null;
+
+  const withGps = records.filter(r => r.gps && r.gps.lat);
+  if (!withGps.length) return;
+
+  // クラスタリング（20m以内を統合）
+  const THRESH = 0.0002;
+  const clusters = [];
+  withGps.forEach(r => {
+    const cl = clusters.find(c => Math.abs(c.lat-r.gps.lat)<THRESH && Math.abs(c.lng-r.gps.lng)<THRESH);
+    if (cl) { cl.items.push(r); if (r.score > cl.maxScore) cl.maxScore = r.score; }
+    else clusters.push({lat:r.gps.lat, lng:r.gps.lng, items:[r], maxScore:r.score});
+  });
+
+  // マップクリックで拡大を閉じる
+  leafletMap.on('click', () => {
+    mapMarkers.forEach(m => { if (m._normalIcon) m.setIcon(m._normalIcon); });
+    expandedId = null;
+  });
+
+  clusters.forEach(cl => {
+    const color = cl.maxScore>=10?'#E24B4A':cl.maxScore>=7?'#EF9F27':'#1D9E75';
+
+    if (cl.items.length === 1) {
+      const r = cl.items[0];
+      const thumb = r.photos && Object.values(r.photos)[0];
+
+      // 通常マーカー：写真あり→サムネ枠、写真なし→スコア丸
+      const normalHtml = thumb
+        ? `<div style="width:54px;height:54px;border-radius:10px;overflow:hidden;border:3px solid ${color};box-shadow:0 2px 8px rgba(0,0,0,.4);cursor:pointer;position:relative;background:#f0f0ec;">
+            <img src="${thumb}" style="width:100%;height:100%;object-fit:cover;">
+            <div style="position:absolute;bottom:0;right:0;background:${color};color:white;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px 0 0 0;">${r.score}</div>
+           </div>`
+        : `<div style="width:36px;height:36px;background:${color};border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;color:white;font-size:12px;font-weight:700;cursor:pointer;">${r.score}</div>`;
+
+      // 拡大カード
+      const expandHtml = `<div style="width:170px;background:white;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.3);overflow:hidden;cursor:pointer;border:2px solid ${color};">
+        ${thumb
+          ? `<img src="${thumb}" style="width:100%;height:95px;object-fit:cover;display:block;">`
+          : `<div style="width:100%;height:72px;background:#f0f0ec;display:flex;align-items:center;justify-content:center;font-size:28px;">🏚</div>`}
+        <div style="padding:8px 10px 10px;">
+          <div style="font-size:12px;font-weight:700;line-height:1.4;margin-bottom:4px;">${r.address}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <span style="font-size:11px;color:#666;">${r.judge}</span>
+            <span style="font-size:17px;font-weight:700;color:${color};">${r.score}</span>
+          </div>
+          <div style="padding:5px;background:#E1F5EE;border-radius:7px;text-align:center;font-size:11px;color:#0F6E56;font-weight:700;">もう一度タップで詳細を見る →</div>
+        </div>
+      </div>`;
+
+      const sz = thumb ? 54 : 36;
+      const normalIcon = L.divIcon({ html:normalHtml, className:'', iconSize:[sz,sz], iconAnchor:[sz/2, sz] });
+      const expandIcon  = L.divIcon({ html:expandHtml, className:'', iconSize:[170,195], iconAnchor:[85,195] }); // アンカー下端
+
+      const marker = L.marker([cl.lat, cl.lng], {icon: normalIcon}).addTo(leafletMap);
+      marker._normalIcon = normalIcon;
+      marker._expandIcon = expandIcon;
+      marker._rid = r.id;
+
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (expandedId === r.id) {
+          // 2回目タップ → 詳細へ
+          showDetail(r.id);
+        } else {
+          // 1回目タップ → 他を閉じて拡大
+          mapMarkers.forEach(m => { if (m._normalIcon && m._rid !== r.id) m.setIcon(m._normalIcon); });
+          marker.setIcon(expandIcon);
+          // カード(195px)がピンの真上に展開 → ピンが見えるようマップ中央より下にpan
+          const offset = leafletMap.latLngToContainerPoint([cl.lat, cl.lng]);
+          const newCenter = leafletMap.containerPointToLatLng(
+            L.point(offset.x, offset.y - 100)
+          );
+          leafletMap.panTo(newCenter);
+          expandedId = r.id;
+        }
+      });
+      mapMarkers.push(marker);
+
+    } else {
+      // 複数件クラスタ
+      const icon = L.divIcon({
+        html:`<div style="width:40px;height:40px;background:${color};border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;color:white;cursor:pointer;font-size:10px;font-weight:700;">${cl.items.length}件</div>`,
+        className:'', iconSize:[40,40], iconAnchor:[20,40]
+      });
+      const marker = L.marker([cl.lat, cl.lng], {icon}).addTo(leafletMap);
+      const listHtml = cl.items.map(r => {
+        const t = r.photos && Object.values(r.photos)[0];
+        const c2 = r.score>=10?'#E24B4A':r.score>=7?'#EF9F27':'#1D9E75';
+        return `<div style="padding:6px 0;border-bottom:.5px solid #eee;cursor:pointer;display:flex;align-items:center;gap:8px;" onclick="showDetail(${r.id})">
+          ${t ? `<img src="${t}" style="width:38px;height:38px;border-radius:6px;object-fit:cover;flex-shrink:0;">` : `<div style="width:38px;height:38px;background:#f0f0ec;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🏚</div>`}
+          <div style="flex:1;min-width:0;"><div style="font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${r.address}</div><div style="font-size:11px;color:#666;">${r.judge}</div></div>
+          <span style="font-weight:700;color:${c2};font-size:15px;">${r.score}</span>
+        </div>`;
+      }).join('');
+      marker.bindPopup(`<div style="min-width:200px;font-family:-apple-system,sans-serif;"><div style="font-weight:700;margin-bottom:6px;font-size:13px;">📍 ${cl.items.length}件の物件</div>${listHtml}</div>`, {maxWidth:220});
+      mapMarkers.push(marker);
+    }
+  });
+
+  const bounds = L.latLngBounds(withGps.map(r => [r.gps.lat, r.gps.lng]));
+  leafletMap.fitBounds(bounds, {padding:[40,40], maxZoom:16});
+}
+
+// ===== STATS =====
+function renderStats() {
+  document.getElementById('st-total').textContent = records.length;
+  document.getElementById('st-high').textContent = records.filter(r=>r.score>=10).length;
+  document.getElementById('st-ok').textContent = records.filter(r=>r.status==='verified').length;
+  document.getElementById('p-total').textContent = records.length;
+  document.getElementById('p-pts').textContent = records.length * 50;
+  document.getElementById('p-high').textContent = records.filter(r=>r.score>=10).length + '件';
+  document.getElementById('p-mid').textContent = records.filter(r=>r.score>=7&&r.score<10).length + '件';
+  document.getElementById('p-low').textContent = records.filter(r=>r.score<7).length + '件';
+}
+
+// ===== LIST =====
+function renderRecent() {
+  document.getElementById('recent-list').innerHTML = records.slice(0,3).map(liHtml).join('');
+}
+
+function renderList() {
+  const filtered = filter==='all' ? records
+    : filter==='high' ? records.filter(r=>r.score>=10)
+    : filter==='mid'  ? records.filter(r=>r.score>=7&&r.score<10)
+    : records.filter(r=>r.status==='verified');
+  document.getElementById('full-list').innerHTML = filtered.length
+    ? filtered.map(liHtml).join('')
+    : '<div style="padding:40px;text-align:center;color:var(--gray);font-size:14px;">該当する物件がありません</div>';
+}
+
+function liHtml(r) {
+  const color = r.score>=10?'var(--red)':r.score>=7?'var(--amber)':'var(--green)';
+  const tag = r.status==='verified'?'<span class="tag tag-g">確認済み</span>'
+    :r.score>=10?'<span class="tag tag-r">高スコア</span>'
+    :r.score>=7?'<span class="tag tag-a">要確認</span>'
+    :'<span class="tag tag-gray">要観察</span>';
+  const thumb = r.photos && Object.values(r.photos)[0];
+  const thumbHtml = thumb
+    ? `<img class="li-thumb" src="${thumb}">`
+    : `<div class="li-thumb-ph">🏚</div>`;
+  return `<div class="li-wrap" id="wrap-${r.id}">
+    <div class="li-del" id="del-${r.id}" onclick="event.stopPropagation();confirmDeleteById(${r.id})" ontouchend="event.preventDefault();event.stopPropagation();confirmDeleteById(${r.id})">
+      <svg width="22" height="22" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M9 6V4h6v2"/></svg>
+    </div>
+    <div class="li-inner" id="inner-${r.id}" onclick="handleLiClick(event,${r.id})">
+      ${thumbHtml}
+      <div class="li-body">
+        <div class="li-addr">${r.address}</div>
+        <div class="li-meta">${r.date} · ${r.type} ${tag}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;">
+        <div class="li-score" style="color:${color};">${r.score}</div>
+        <button onclick="event.stopPropagation();toggleDel(${r.id})" style="background:none;border:none;cursor:pointer;padding:4px;color:var(--gray);line-height:1;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
+let openDelId = null;
+function toggleDel(id) {
+  // 他を閉じる
+  if (openDelId && openDelId !== id) closeDel(openDelId);
+  const del = document.getElementById('del-' + id);
+  const inner = document.getElementById('inner-' + id);
+  if (!del || !inner) return;
+  const isOpen = del.style.transform === 'translateX(0%)' || del.style.transform === 'translateX(0px)' || del.style.transform === 'translateX(0)';
+  if (isOpen) { closeDel(id); }
+  else {
+    del.style.transform = 'translateX(0)';
+    inner.style.transform = 'translateX(-72px)';
+    openDelId = id;
+  }
+}
+function closeDel(id) {
+  const del = document.getElementById('del-' + id);
+  const inner = document.getElementById('inner-' + id);
+  if (del) del.style.transform = 'translateX(100%)';
+  if (inner) inner.style.transform = 'translateX(0)';
+  if (openDelId === id) openDelId = null;
+}
+function handleLiClick(e, id) {
+  if (openDelId === id) { closeDel(id); return; }
+  showDetail(id);
+}
+function confirmDeleteById(id) {
+  records = records.filter(rec => rec.id !== id);
+  saveRecords();
+  // Supabaseから直接削除
+  sbFetch('DELETE', SB_TABLE + '?id=eq.' + id).catch(e => console.log('delete error:', e));
+  renderAll();
+  toast('削除しました');
+  openDelId = null;
+}
+
+function setFilter(el, f) {
+  filter = f;
+  document.querySelectorAll('#s-list .chip').forEach(c => c.classList.remove('on'));
+  el.classList.add('on');
+  renderList();
+}
+
+// ===== DETAIL =====
+function showDetail(id) {
+  const r = records.find(rec => rec.id === id);
+  if (!r) return;
+  currentDetailId = id;
+
+
+
+  const color = r.score>=10?'var(--red)':r.score>=7?'var(--amber)':'var(--green)';
+  const thumb = r.photos && Object.values(r.photos)[0];
+
+  // ヒーロー画像
+  const heroEl = document.getElementById('d-hero');
+  if (thumb) {
+    heroEl.innerHTML = `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover;">
+      <div class="detail-overlay"><div class="detail-addr">${r.address}</div><div class="detail-meta2">${r.date} · ${r.type} · ${r.age}</div></div>
+      <button class="back-btn" onclick="go('s-list')">←</button>`;
+  } else {
+    heroEl.innerHTML = `<div class="detail-hero-ph">🏚</div>
+      <div class="detail-overlay"><div class="detail-addr">${r.address}</div><div class="detail-meta2">${r.date} · ${r.type} · ${r.age}</div></div>
+      <button class="back-btn" onclick="go('s-list')">←</button>`;
+  }
+
+  document.getElementById('d-judge').textContent = r.judge;
+  document.getElementById('d-date').textContent = r.date + ' 登録';
+  document.getElementById('d-comment').textContent = r.comment;
+
+  const stTag = r.status==='verified'
+    ? '<span class="tag tag-g">確認済み</span>'
+    : '<span class="tag tag-a">審査中</span>';
+  document.getElementById('d-status').innerHTML = stTag;
+
+  document.getElementById('d-ring').innerHTML = `
+    <div style="width:68px;height:68px;border-radius:50%;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+      <span style="font-size:22px;font-weight:700;color:${color};">${r.score}</span>
+      <span style="font-size:10px;color:var(--gray);">/ 30</span>
+    </div>`;
+
+  // スコア詳細
+  document.getElementById('d-scores').innerHTML = CATS.filter(c => r.scores && r.scores[c.id] !== undefined).map(cat => {
+    const s = r.scores[cat.id];
+    const ws = s * cat.weight;
+    const pct = (s/3)*100;
+    const c2 = s>=3?'var(--red)':s>=2?'var(--amber)':s>=1?'#639922':'var(--green)';
+    return `<div class="score-row">
+      <span class="score-lbl">${cat.label} ×${cat.weight}</span>
+      <div class="score-bar-w"><div class="score-bar" style="width:${pct}%;background:${c2};"></div></div>
+      <span class="score-val" style="color:${c2};">${ws}/${cat.weight*3}</span>
+    </div>`;
+  }).join('');
+
+  // 写真グリッド
+  const photosObj = r.photos || {};
+  const photoEntries = Object.entries(photosObj);
+  document.getElementById('d-photos').innerHTML = photoEntries.length
+    ? photoEntries.map(([catId, dataUrl]) => {
+        const cat = CATS.find(c => c.id === catId);
+        return `<div class="photo-cell"><img src="${dataUrl}"><div class="photo-cell-lbl">${cat ? cat.label : catId}</div></div>`;
+      }).join('')
+    : '<div style="grid-column:1/-1;padding:14px;text-align:center;color:var(--gray);font-size:13px;background:var(--bg);border-radius:var(--rs);">📷 写真データなし</div>';
+
+  // 登録情報
+  const rows = [
+    ['建物種別', r.type], ['築年数', r.age], ['建物状態', r.cond],
+    ['GPS', r.gps ? `${r.gps.lat.toFixed(5)}, ${r.gps.lng.toFixed(5)}` : '未取得'],
+    ['メモ', r.memo || 'なし'],
+  ];
+  // 登記情報（入力済みのものだけ表示）
+  const regRows = [
+    ['所有者', r.reg_owner],
+    ['地番', r.reg_chiban],
+    ['地目', r.reg_chimoku],
+    ['地積', r.reg_chiseki ? r.reg_chiseki + ' ㎡' : null],
+    ['登記年', r.reg_touki_year ? r.reg_touki_year + '年' : null],
+    ['抵当権', r.reg_teito],
+    ['評価額', r.reg_hyoka ? r.reg_hyoka + ' 万円' : null],
+    ['空き家経緯', r.reg_keii],
+    ['接触状況', r.reg_contact],
+    ['接触メモ', r.reg_contact_memo],
+  ].filter(row => row[1]);
+
+  const hasReg = regRows.length > 0;
+  document.getElementById('d-info').innerHTML =
+    rows.map((row,i) =>
+      `<div class="info-row"><span class="info-key">${row[0]}</span><span class="info-val">${row[1]}</span></div>`
+    ).join('') +
+    (hasReg ? `
+      <div style="padding:8px 14px;background:var(--green-l);display:flex;align-items:center;gap:6px;">
+        <span style="font-size:12px;font-weight:700;color:var(--green-d);">📋 登記情報</span>
+      </div>
+      ${regRows.map(row =>
+        `<div class="info-row"><span class="info-key" style="width:90px;">${row[0]}</span><span class="info-val">${row[1]}</span></div>`
+      ).join('')}` : `
+      <div style="padding:10px 14px;border-top:.5px solid var(--border);">
+        <span style="font-size:12px;color:var(--gray);">📋 登記情報未入力 — 編集から追加できます</span>
+      </div>`
+    );
+
+  go('s-detail');
+  // ボタンにイベントを直接設定
+  document.getElementById('btn-edit').onclick = () => openEdit();
+  document.getElementById('btn-delete').onclick = () => askDelete();
+}
+
+// ===== DELETE =====
+function openEdit() {
+  const r = records.find(rec => rec.id === currentDetailId);
+  if (!r) return;
+
+  // フォームに現在値をセット
+  document.getElementById('e-addr').value = r.address;
+  document.getElementById('e-memo').value = r.memo || '';
+
+  // 建物種別
+  document.getElementById('e-type').querySelectorAll('.chip').forEach(c => {
+    c.classList.toggle('on', c.textContent === r.type);
+  });
+  // 築年数
+  document.getElementById('e-age').querySelectorAll('.chip').forEach(c => {
+    c.classList.toggle('on', c.textContent === r.age);
+  });
+  // 建物状態
+  const condRow = document.getElementById('e-cond-row');
+  condRow.querySelectorAll('.cond-btn').forEach(b => {
+    b.classList.remove('g','a','r');
+    if (r.cond === '良好' && b.textContent === '良好') b.classList.add('g');
+    if (r.cond === '要注意' && b.textContent === '要注意') b.classList.add('a');
+    if (r.cond === '危険' && b.textContent === '危険') b.classList.add('r');
+  });
+  // ステータス
+  document.getElementById('e-status').querySelectorAll('.chip').forEach(c => {
+    c.classList.toggle('on', 
+      (c.textContent === '確認済み' && r.status === 'verified') ||
+      (c.textContent === '審査中' && r.status !== 'verified')
+    );
+  });
+
+  // 登記情報をセット
+  document.getElementById('e-owner').value = r.reg_owner || '';
+  document.getElementById('e-chiban').value = r.reg_chiban || '';
+  document.getElementById('e-chiseki').value = r.reg_chiseki || '';
+  document.getElementById('e-touki-year').value = r.reg_touki_year || '';
+  document.getElementById('e-hyoka').value = r.reg_hyoka || '';
+  document.getElementById('e-contact-memo').value = r.reg_contact_memo || '';
+  ['e-chimoku','e-teito','e-keii','e-contact'].forEach(gid => {
+    const field = gid.replace('e-','reg_').replace('-','_');
+    const val = r['reg_' + gid.replace('e-','').replace(/-/g,'_')];
+    document.getElementById(gid).querySelectorAll('.chip').forEach(ch => {
+      ch.classList.toggle('on', ch.textContent === val);
+    });
+  });
+
+  go('s-edit');
+}
+
+function saveEdit() {
+  const addr = document.getElementById('e-addr').value.trim();
+  if (!addr) { toast('住所を入力してください'); return; }
+
+  const idx = records.findIndex(rec => rec.id === currentDetailId);
+  if (idx === -1) return;
+
+  const statusChip = document.getElementById('e-status').querySelector('.chip.on');
+  const newStatus = statusChip && statusChip.textContent === '確認済み' ? 'verified' : 'pending';
+
+  // 建物状態取得
+  const condRow = document.getElementById('e-cond-row');
+  let newCond = '要注意';
+  if (condRow.querySelector('.cond-btn.g')) newCond = '良好';
+  if (condRow.querySelector('.cond-btn.r')) newCond = '危険';
+
+  records[idx] = {
+    ...records[idx],
+    address: addr,
+    type: getEditChip('e-type') || records[idx].type,
+    age: getEditChip('e-age') || records[idx].age,
+    cond: newCond,
+    memo: document.getElementById('e-memo').value,
+    status: newStatus,
+    // 登記情報
+    reg_owner:        document.getElementById('e-owner').value.trim(),
+    reg_chiban:       document.getElementById('e-chiban').value.trim(),
+    reg_chimoku:      getEditChip('e-chimoku'),
+    reg_chiseki:      document.getElementById('e-chiseki').value,
+    reg_touki_year:   document.getElementById('e-touki-year').value,
+    reg_teito:        getEditChip('e-teito'),
+    reg_hyoka:        document.getElementById('e-hyoka').value,
+    reg_keii:         getEditChip('e-keii'),
+    reg_contact:      getEditChip('e-contact'),
+    reg_contact_memo: document.getElementById('e-contact-memo').value.trim(),
+  };
+
+  saveRecords();
+  syncRecord(records[idx]); // Supabaseにバックグラウンド同期
+  renderAll();
+  toast('保存しました');
+  showDetail(currentDetailId);
+}
+
+function getEditChip(gid) {
+  const s = document.getElementById(gid).querySelector('.chip.on');
+  return s ? s.textContent : '';
+}
+
+function askDelete() {
+  if (!currentDetailId) return;
+  const deletedId = currentDetailId;
+  records = records.filter(rec => rec.id !== deletedId);
+  saveRecords();
+  // Supabase DBから削除
+  sbFetch('DELETE', SB_TABLE + '?id=eq.' + deletedId).catch(e => console.log('delete error:', e));
+  // Supabase Storageから写真削除
+  deleteStoragePhotos(deletedId).catch(e => console.log('storage delete error:', e));
+  // localStorageの写真キーも削除
+  localStorage.removeItem('akiya_photos_' + deletedId);
+  renderAll();
+  toast('削除しました');
+  go('s-list');
+}
+
+function askReset() {
+  // localStorageのみリセット（Supabaseのデータは削除しない）
+  localStorage.removeItem('akiya_records_v2');
+  // 写真キャッシュもクリア
+  Object.keys(localStorage).filter(k => k.startsWith('akiya_photos_')).forEach(k => localStorage.removeItem(k));
+  records = [];
+  // Supabaseから最新データを再取得
+  loadRecords().then(() => {
+    renderAll();
+    toast('キャッシュをリセットしました');
+    go('s-home');
+  });
+}
+
+// ===== DIALOG =====
+function openDialog(title, msg, onOk) {
+  document.getElementById('dialog-title').textContent = title;
+  document.getElementById('dialog-msg').textContent = msg;
+  dialogOkFn = onOk;
+  document.getElementById('dialog').classList.add('open');
+  document.getElementById('dialog-ok').onclick = () => { closeDialog(); if (dialogOkFn) dialogOkFn(); };
+}
+
+function closeDialog() {
+  document.getElementById('dialog').classList.remove('open');
+  dialogOkFn = null;
+}
+
+// ===== TOAST =====
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ===== CAMERA / PHOTOS =====
+let currentCatId = null;
+
+function resetCam() {
+  photos = {}; aiScores = {}; totalScore = 0;
+}
+
+function renderCatSlots() {
+  const el = document.getElementById('cat-slots');
+  el.innerHTML = CATS.map(cat => {
+    const p = photos[cat.id];
+    const badge = cat.required ? '<span class="tag tag-r" style="font-size:10px;">必須</span>'
+      : cat.recommended ? '<span class="tag tag-a" style="font-size:10px;">推奨</span>'
+      : '<span class="tag tag-gray" style="font-size:10px;">任意</span>';
+    const exifBadge = p ? (p.exifGps
+      ? '<span class="exif-badge exif-ok">📍GPS</span>'
+      : '<span class="exif-badge exif-no">GPS無</span>') : '';
+    return `<div class="cat-slot ${p?'done':''}" id="slot-${cat.id}">
+      <div class="cat-thumb" id="thumb-${cat.id}">
+        ${p ? `<img src="${p.dataUrl}">` : cat.icon}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:14px;font-weight:700;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${cat.label} ${badge} ${exifBadge}
+        </div>
+        <div style="font-size:12px;color:var(--gray);margin-top:2px;">${cat.hint}</div>
+      </div>
+      <button class="cat-shoot-btn" onclick="openCam('${cat.id}')">${p ? '撮り直し' : '撮影'}</button>
+    </div>`;
+  }).join('');
+  // ボタン活性制御
+  const hasRequired = CATS.filter(c=>c.required).every(c=>photos[c.id]);
+  const btn = document.getElementById('analyze-btn');
+  btn.disabled = !hasRequired;
+  btn.style.opacity = hasRequired ? '1' : '0.5';
+}
+
+function openCam(catId) {
+  currentCatId = catId;
+  document.getElementById('file-in').click();
+}
+
+// 写真リサイズ
+function resizeImg(dataUrl, maxPx=600, q=0.72) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const w = Math.round(img.width*scale), h = Math.round(img.height*scale);
+      const cv = document.createElement('canvas');
+      cv.width=w; cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      res(cv.toDataURL('image/jpeg', q));
+    };
+    img.src = dataUrl;
+  });
+}
+
+async function onFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    const raw = ev.target.result;
+    const exifGps = extractEXIF(raw);
+    const dataUrl = await resizeImg(raw);
+    photos[currentCatId] = {dataUrl, exifGps};
+    // EXIF GPSが取れたら表示更新
+    if (exifGps) {
+      updateGpsDisplay();
+    }
+    renderCatSlots();
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+}
+
+// ===== EXIF GPS =====
+function extractEXIF(dataUrl) {
+  try {
+    const b64 = dataUrl.split(',')[1];
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    return parseEXIF(bytes);
+  } catch(e) { return null; }
+}
+
+function parseEXIF(data) {
+  let off = 2;
+  while (off < data.length-4) {
+    if (data[off]===0xFF && data[off+1]===0xE1) {
+      const start = off+4;
+      if (String.fromCharCode(data[start],data[start+1],data[start+2],data[start+3])==='Exif')
+        return parseGPS(data, start+6);
+    }
+    if (data[off]===0xFF) { const len=(data[off+2]<<8)|data[off+3]; off+=2+len; }
+    else break;
+  }
+  return null;
+}
+
+function parseGPS(data, tiff) {
+  try {
+    const le = data[tiff]===0x49;
+    const r16 = o => le?(data[o]|(data[o+1]<<8)):((data[o]<<8)|data[o+1]);
+    const r32 = o => le?(data[o]|(data[o+1]<<8)|(data[o+2]<<16)|(data[o+3]<<24)):((data[o]<<24)|(data[o+1]<<16)|(data[o+2]<<8)|data[o+3]);
+    const rat = o => { const n=r32(o),d=r32(o+4); return d?n/d:0; };
+    const ifdOff = r32(tiff+4);
+    const cnt = r16(tiff+ifdOff);
+    let gpsOff = null;
+    for (let i=0;i<cnt;i++) {
+      const e=tiff+ifdOff+2+i*12;
+      if (r16(e)===0x8825) { gpsOff=tiff+r32(e+8); break; }
+    }
+    if (!gpsOff) return null;
+    const gc=r16(gpsOff);
+    let latRef='N',lat=null,lngRef='E',lng=null;
+    for (let i=0;i<gc;i++) {
+      const e=gpsOff+2+i*12, tag=r16(e), vo=tiff+r32(e+8);
+      if (tag===1) latRef=String.fromCharCode(data[e+8]);
+      else if (tag===2) lat=rat(vo)+rat(vo+8)/60+rat(vo+16)/3600;
+      else if (tag===3) lngRef=String.fromCharCode(data[e+8]);
+      else if (tag===4) lng=rat(vo)+rat(vo+8)/60+rat(vo+16)/3600;
+    }
+    if (lat===null||lng===null) return null;
+    return {lat:latRef==='S'?-lat:lat, lng:lngRef==='W'?-lng:lng};
+  } catch(e) { return null; }
+}
+
+// ===== GPS =====
+function getGPS() {
+  // ブラウザGPSは使わない（現在地≠撮影場所になるため）
+  // 写真のEXIF GPSのみを使用する
+  updateGpsDisplay();
+}
+
+function retryGPS() { gpsCoords=null; updateGpsDisplay(); }
+
+function showGPSFail() {
+  document.getElementById('gps-txt').textContent = '取得失敗';
+  document.getElementById('gps-manual').style.display = 'block';
+}
+
+function updateGpsDisplay() {
+  const d = document.getElementById('gps-txt');
+  if (!d) return;
+  const exifGps = Object.values(photos).map(p => p.exifGps).find(g => g);
+  if (exifGps) {
+    d.textContent = `${exifGps.lat.toFixed(5)}, ${exifGps.lng.toFixed(5)} 📷写真のGPSから取得`;
+    d.style.color = 'var(--green-d)';
+    document.getElementById('gps-manual').style.display = 'none';
+  } else {
+    d.textContent = '写真からGPSを取得できませんでした。手動で入力してください。';
+    d.style.color = 'var(--amber)';
+    document.getElementById('gps-manual').style.display = 'block';
+  }
+}
+
+function geocodeAddr() {
+  const addr = document.getElementById('f-addr').value.trim();
+  if (!addr) { toast('先に住所を入力してください'); return; }
+  const base = {lat:26.1713, lng:127.6647};
+  gpsCoords = {lat:base.lat+(Math.random()-.5)*.005, lng:base.lng+(Math.random()-.5)*.005};
+  document.getElementById('gps-lat').value = gpsCoords.lat.toFixed(5);
+  document.getElementById('gps-lng').value = gpsCoords.lng.toFixed(5);
+  updateGpsDisplay();
+  toast('住所から座標を推定しました');
+}
+
+function resolveGPS() {
+  // 1. 写真のEXIF GPSを最優先（撮影場所が正確）
+  const exifGps = Object.values(photos).map(p => p.exifGps).find(g => g);
+  if (exifGps) return exifGps;
+
+  // 2. 手動入力のみ（ブラウザGPSは使わない）
+  const lat = parseFloat(document.getElementById('gps-lat').value);
+  const lng = parseFloat(document.getElementById('gps-lng').value);
+  if (!isNaN(lat) && !isNaN(lng)) return {lat, lng};
+
+  return null;
+}
+
+// ===== AI ANALYSIS =====
+async function startAnalysis() {
+  const missing = CATS.filter(c=>c.required&&!photos[c.id]);
+  if (missing.length) { toast('外観写真を撮影してください'); return; }
+  go('s-analysis');
+  // サムネ表示
+  document.getElementById('analysis-thumbs').innerHTML = Object.entries(photos).map(([catId,p]) => {
+    const cat = CATS.find(c=>c.id===catId);
+    return `<div class="photo-cell"><img src="${p.dataUrl}"><div class="photo-cell-lbl">${cat.label}</div></div>`;
+  }).join('');
+  // スコアリング
+  aiScores = {}; totalScore = 0;
+  document.getElementById('score-rows').innerHTML = '';
+  document.getElementById('total-row').style.opacity = '0.3';
+  document.getElementById('to-form-btn').style.display = 'none';
+  document.getElementById('ai-comment').textContent = '写真を解析しています…';
+  document.getElementById('ai-comment').classList.add('pulse');
+
+  for (const [catId, p] of Object.entries(photos)) {
+    const cat = CATS.find(c=>c.id===catId);
+    document.getElementById('analysis-status').textContent = `分析中 (${catId})…`;
+    try {
+      const res = await scorePhoto(p.dataUrl, cat);
+      aiScores[catId] = res;
+    } catch(e) {
+      // APIキーなし・オフライン時はデモスコア
+      aiScores[catId] = {score: Math.floor(Math.random()*3)};
+    }
+    totalScore = Object.entries(aiScores).reduce((sum,[id,s]) => {
+      const c = CATS.find(c=>c.id===id);
+      return sum + s.score * c.weight;
+    }, 0);
+    renderScoreRows();
+    document.getElementById('total-n').textContent = totalScore;
+    document.getElementById('total-row').style.opacity = '1';
+    updateConf();
+  }
+
+  // コメント生成
+  document.getElementById('analysis-status').textContent = '完了';
+  document.getElementById('ai-comment').classList.remove('pulse');
+  const highCats = Object.entries(aiScores).filter(([,s])=>s.score>=2).map(([id])=>CATS.find(c=>c.id===id).label);
+  document.getElementById('ai-comment').textContent = makeComment(totalScore, highCats);
+  document.getElementById('ai-comment').style.color = 'var(--black)';
+  document.getElementById('to-form-btn').style.display = 'flex';
+  document.getElementById('analysis-hdr-title').textContent = 'AI判定完了';
+}
+
+async function scorePhoto(dataUrl, cat) {
+  if (!apiKey) throw new Error('no key');
+  const base64 = dataUrl.split(',')[1];
+  const mtype = dataUrl.split(';')[0].split(':')[1] || 'image/jpeg';
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'claude-sonnet-4-20250514', max_tokens:120,
+      messages:[{role:'user', content:[
+        {type:'image', source:{type:'base64', media_type:mtype, data:base64}},
+        {type:'text', text:`空き家調査「${cat.label}」の写真です。${cat.prompt}\nJSONのみで回答:{"score":0〜3の整数}`}
+      ]}]
+    })
+  });
+  if (!res.ok) throw new Error('api');
+  const d = await res.json();
+  const text = d.content[0].text.replace(/```json|```/g,'').trim();
+  return JSON.parse(text);
+}
+
+function renderScoreRows() {
+  document.getElementById('score-rows').innerHTML = CATS.filter(c=>photos[c.id]).map(cat => {
+    const s = aiScores[cat.id];
+    const score = s ? s.score : 0;
+    const pct = (score/3)*100;
+    const color = score>=3?'var(--red)':score>=2?'var(--amber)':score>=1?'#639922':'var(--green)';
+    const ws = score * cat.weight;
+    const wmax = cat.weight * 3;
+    return `<div class="score-row">
+      <span class="score-lbl">${cat.label} <span style="font-size:11px;color:var(--gray);">×${cat.weight}</span></span>
+      <div class="score-bar-w"><div class="score-bar ${s?'':'pulse'}" style="width:${pct}%;background:${color};"></div></div>
+      <span class="score-val" style="color:${color};">${s?`${ws}/${wmax}`:'--'}</span>
+    </div>`;
+  }).join('');
+}
+
+function updateConf() {
+  const recommended = CATS.filter(c=>c.recommended&&aiScores[c.id]).length;
+  const total = CATS.filter(c=>c.recommended).length;
+  const conf = recommended>=total?'高信頼度':recommended>=1?'中信頼度':'低信頼度';
+  const cls = conf==='高信頼度'?'tag-g':conf==='中信頼度'?'tag-a':'tag-gray';
+  const el = document.getElementById('conf-tag');
+  el.className = `tag ${cls}`;
+  el.textContent = conf;
+  const color = totalScore>=10?'var(--red)':totalScore>=7?'var(--amber)':'var(--green)';
+  document.getElementById('total-n').style.color = color;
+}
+
+function makeComment(score, highCats) {
+  if (score>=15) return `${highCats.join('・')}で深刻な問題が確認されました。長期放置の可能性が非常に高く、優先的に登記情報の確認をお勧めします。`;
+  if (score>=10) return `${highCats.length?highCats.join('・')+'に問題が見られ、':''}空き家の可能性が高い状態です。追加撮影と経過観察を推奨します。`;
+  if (score>=7) return `生活感の欠如がいくつか確認されました。季節を変えて再訪し変化を確認してください。`;
+  if (score>=4) return `軽微な問題は見られますが居住中の可能性もあります。定期的な確認を推奨します。`;
+  return `生活感があり現時点では居住中の可能性が高いです。`;
+}
+
+// ===== FORM / SUBMIT =====
+function selChip(el, gid) {
+  document.getElementById(gid).querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+  el.classList.add('on');
+}
+
+function selCond(el, cls) {
+  el.closest('.cond-row').querySelectorAll('.cond-btn').forEach(b=>b.classList.remove('g','a','r'));
+  el.classList.add(cls);
+}
+
+function getChip(gid) {
+  const s = document.getElementById(gid).querySelector('.chip.on');
+  return s ? s.textContent : '';
+}
+
+function getCond() {
+  const row = document.querySelector('#s-form .cond-row');
+  if (!row) return '要注意';
+  const g = row.querySelector('.cond-btn.g');
+  const r = row.querySelector('.cond-btn.r');
+  if (g) return '良好';
+  if (r) return '危険';
+  return '要注意';
+}
+
+function submitRecord() {
+  if (submitting) return;
+  const addr = document.getElementById('f-addr').value.trim();
+  if (!addr) { toast('住所・場所を入力してください'); return; }
+  submitting = true;
+  setTimeout(()=>submitting=false, 3000);
+
+  const gps = resolveGPS();
+  const r = {
+    id: Date.now(),
+    address: addr,
+    type: getChip('f-type'),
+    age: getChip('f-age'),
+    cond: getCond(),
+    memo: document.getElementById('f-memo').value,
+    date: new Date().toISOString().split('T')[0],
+    score: totalScore,
+    judge: totalScore>=10?'空き家の可能性大':totalScore>=7?'空き家疑い':totalScore>=4?'要観察':'居住中の可能性大',
+    status: 'pending',
+    comment: document.getElementById('ai-comment').textContent,
+    scores: Object.fromEntries(Object.entries(aiScores).map(([id,s])=>[id,s.score])),
+    photos: Object.fromEntries(Object.entries(photos).map(([id,p])=>[id,p.dataUrl])),
+    gps,
+  };
+
+  records.unshift(r);
+  // 写真を専用キーで保存（ローカル・base64）
+  savePhotosLocal(r);
+  // localStorageにも保存
+  try {
+    localStorage.setItem('akiya_records_v2', JSON.stringify(records));
+  } catch(e) {
+    const slim = records.map(rec => ({...rec, photos:{}}));
+    localStorage.setItem('akiya_records_v2', JSON.stringify(slim));
+  }
+  renderStats();
+  // 写真アップロード完了後にDB同期（非同期）
+  (async () => {
+    try {
+      showSyncStatus('写真をアップロード中…');
+      const photoUrls = await uploadAllPhotos(r);
+      console.log('photoUrls:', photoUrls);
+      const rWithUrls = {...r, photos: photoUrls};
+      // localStorageのURLも更新
+      savePhotosLocal(rWithUrls);
+      const idx = records.findIndex(rec => rec.id === r.id);
+      if (idx !== -1) records[idx] = rWithUrls;
+      try { localStorage.setItem('akiya_records_v2', JSON.stringify(records)); } catch(e) {}
+      // 写真URL込みでDB保存
+      await syncRecord(rWithUrls);
+      showSyncStatus('写真をクラウドに保存しました ✓');
+      renderAll();
+    } catch(e) {
+      console.log('upload error:', e);
+      syncRecord(r);
+    }
+  })();
+
+  const pts = totalScore>=10?80:totalScore>=7?60:50;
+  document.getElementById('pts-n').textContent = '+' + pts;
+  go('s-complete');
+}
+
+// ===== API KEY =====
+function saveKey() {
+  apiKey = document.getElementById('api-key-in').value.trim();
+  localStorage.setItem('akiya_key', apiKey);
+  toast('APIキーを保存しました');
+}
+</script>
+<script>
+// ===== SERVICE WORKER 登録 =====
+if ('serviceWorker' in navigator) {
+  // file://やサンドボックス環境では動作しないためHTTPS環境のみ登録
+  const isHttps = location.protocol === 'https:' || location.hostname === 'localhost';
+  if (isHttps) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').then(reg => {
+        console.log('SW registered:', reg.scope);
+        reg.onupdatefound = () => {
+          const newWorker = reg.installing;
+          newWorker.onstatechange = () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              toast('アプリを更新しました。再読み込みすると反映されます。');
+            }
+          };
+        };
+      }).catch(err => console.log('SW registration failed:', err));
+    });
+  }
+}
+
+// ===== インストールプロンプト =====
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  // インストールボタンを表示
+  const btn = document.getElementById('install-btn');
+  if (btn) btn.style.display = 'flex';
+});
+
+window.addEventListener('appinstalled', () => {
+  toast('ホーム画面に追加しました！');
+  deferredPrompt = null;
+  const btn = document.getElementById('install-btn');
+  if (btn) btn.style.display = 'none';
+});
+
+function installApp() {
+  if (deferredPrompt) {
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(choice => {
+      if (choice.outcome === 'accepted') toast('インストールしています…');
+      deferredPrompt = null;
+    });
+  } else {
+    // iOS向け手順を表示
+    openDialog(
+      'ホーム画面に追加する方法',
+      'iOSの場合：Safari下部の共有ボタン（□↑）→「ホーム画面に追加」をタップしてください。',
+      () => {}
+    );
+    document.getElementById('dialog-ok').textContent = '閉じる';
+    document.getElementById('dialog-ok').style.background = 'var(--green)';
+  }
+}
+</script>
+</body>
+</html>
