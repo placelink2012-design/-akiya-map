@@ -819,8 +819,10 @@ async function loadRecords() {
       let local = [];
       try { local = JSON.parse(localStorage.getItem('akiya_records_v2') || '[]'); } catch(e){}
       records = remote.map(r => {
-        // 写真は専用キーからロード（Supabaseには保存しない）
-        const photos = loadPhotosLocal(r.id);
+        // localStorageの写真（base64）を優先、なければSupabaseのURL（他デバイス対応）
+        const localPhotos = loadPhotosLocal(r.id);
+        const hasLocal = localPhotos && Object.keys(localPhotos).length > 0;
+        const photos = hasLocal ? localPhotos : (r.photos || {});
         return {...r, photos};
       });
       localStorage.setItem('akiya_records_v2', JSON.stringify(records));
