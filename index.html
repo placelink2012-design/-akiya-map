@@ -801,11 +801,16 @@ function loadPhotosLocal(id) {
 }
 
 async function loadRecords() {
-  // まずlocalStorageから即時表示（写真込み）
+  // まずlocalStorageから即時表示（写真はlocalStorage優先、なければSupabase URL）
   try {
     const local = JSON.parse(localStorage.getItem('akiya_records_v2') || '[]');
     if (local.length > 0) {
-      records = local.map(r => ({...r, photos: loadPhotosLocal(r.id) || r.photos || {}}));
+      records = local.map(r => {
+        const localPhotos = loadPhotosLocal(r.id);
+        const hasLocal = localPhotos && Object.keys(localPhotos).length > 0;
+        const photos = hasLocal ? localPhotos : (r.photos || {});
+        return {...r, photos};
+      });
       renderAll();
     }
   } catch(e) {}
