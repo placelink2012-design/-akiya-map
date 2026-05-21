@@ -64,9 +64,9 @@
 <!-- 凡例 -->
 <div class="panel" style="bottom:20px;left:10px;padding:10px 14px;line-height:2.0">
   <b style="font-size:12px">建物敷地面積</b><br>
-  <span style="display:inline-block;width:14px;height:14px;background:#E24B4A;vertical-align:middle;border-radius:2px;margin-right:4px"></span>敷地 広（200㎡以上）リスク高<br>
-  <span style="display:inline-block;width:14px;height:14px;background:#EF9F27;vertical-align:middle;border-radius:2px;margin-right:4px"></span>敷地 中（120〜200㎡）リスク中<br>
-  <span style="display:inline-block;width:14px;height:14px;background:#1D9E75;vertical-align:middle;border-radius:2px;margin-right:4px"></span>敷地 小（120㎡未満）リスク低<br>
+  <span style="display:inline-block;width:14px;height:14px;background:#E24B4A;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 広（100㎡以上）リスク高<br>
+  <span style="display:inline-block;width:14px;height:14px;background:#EF9F27;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 中（60〜100㎡）リスク中<br>
+  <span style="display:inline-block;width:14px;height:14px;background:#1D9E75;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 小（60㎡未満）リスク低<br>
   <hr style="margin:4px 0">
   <small style="color:#666">建物ポリゴン: OpenStreetMap</small>
 </div>
@@ -181,8 +181,8 @@ function _renderBuildings(data) {
     var area = calcAreaM2(coords);
     if (area <= 0 || area > 100000) { skipped++; return; }
 
-    var color = area >= 200 ? '#E24B4A' : area >= 120 ? '#EF9F27' : '#1D9E75';
-    var cat   = area >= 200 ? '広（200㎡以上）' : area >= 120 ? '中（120〜200㎡）' : '小（120㎡未満）';
+    var color = area >= 100 ? '#E24B4A' : area >= 60 ? '#EF9F27' : '#1D9E75';
+    var cat   = area >= 100 ? '広（100㎡以上）' : area >= 60 ? '中（60〜100㎡）' : '小（60㎡未満）';
     L.polygon(coords, {
       color: '#fff', weight: 0.5,
       fillColor: color, fillOpacity: 0.65
