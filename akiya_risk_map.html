@@ -6,6 +6,7 @@
   <title>空き家リスクマップ</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.vectorgrid@latest/dist/Leaflet.VectorGrid.bundled.js"></script>
   <style>
     html, body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; }
     #map { position:fixed; top:0; bottom:0; left:0; right:0; }
@@ -77,6 +78,13 @@
   </label>
   <div style="font-size:10px;color:#888;margin:2px 0 8px 4px">※ズーム16以上で表示</div>
 
+  <div class="sl">地理院建物（基盤地図情報）</div>
+  <label class="cl">
+    <input type="checkbox" id="chk-gsi-bldg"
+           onchange="_toggleGsiBldg(this.checked)"> 地理院建物ポリゴン
+  </label>
+  <div style="font-size:10px;color:#888;margin:2px 0 8px 4px">※ズーム16以上で表示</div>
+
   <div class="sl">その他</div>
   <label class="cl">
     <input type="checkbox" id="chk-mixed" checked
@@ -98,8 +106,9 @@
   <span style="display:inline-block;width:14px;height:14px;background:#EF9F27;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 中（60〜100㎡）リスク中<br>
   <span style="display:inline-block;width:14px;height:14px;background:#1D9E75;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 小（60㎡未満）リスク低<br>
   <span style="display:inline-block;width:14px;height:14px;background:rgba(155,48,255,0.45);vertical-align:middle;border-radius:2px;margin-right:4px;border:1px solid #9B30FF"></span>混在（広＋小 100mグリッド）<br>
+  <span style="display:inline-block;width:14px;height:14px;background:#4A90D9;vertical-align:middle;border-radius:2px;margin-right:4px;opacity:0.8"></span>地理院建物（国土地理院）<br>
   <hr style="margin:4px 0">
-  <small style="color:#666">建物ポリゴン: OpenStreetMap</small>
+  <small style="color:#666">建物ポリゴン: OpenStreetMap / 国土地理院</small>
 </div>
 
 <script>
@@ -314,6 +323,9 @@ function _applyVisibility() {
   if (mixedCb && mixedCb.checked && !map.hasLayer(mixedGridLayer)) {
     map.addLayer(mixedGridLayer);
   }
+  // 地理院建物：ズーム変化時に表示切替
+  var gsiCb = document.getElementById('chk-gsi-bldg');
+  if (gsiCb) _toggleGsiBldg(gsiCb.checked);
 }
 
 // ズーム16以上でマップ中心のエリアを自動ロード（チェックボックスも自動ON）
@@ -373,6 +385,35 @@ function _updateMixedGrid() {
     statusEl.textContent = mixCount > 0 ? mixCount + 'グリッド検出' : '検出なし';
   }
   console.log('混在グリッド: ' + mixCount + 'セル');
+}
+
+// ── 地理院ベクタータイル（基盤地図情報 建物） ──────────────────
+var _gsiBldgVG = null;
+
+function _toggleGsiBldg(show) {
+  var zoom = Math.round(map.getZoom());
+  if (show && zoom >= 16) {
+    if (!_gsiBldgVG) {
+      var bldStyle = { fill: true, fillColor: '#4A90D9', fillOpacity: 0.6, color: '#fff', weight: 0.5, opacity: 1 };
+      var hiddenStyle = { fill: false, stroke: false, weight: 0, fillOpacity: 0, opacity: 0 };
+      var styles = new Proxy(
+        { 'BldA': bldStyle, 'SBldA': { fill: true, fillColor: '#4A90D9', fillOpacity: 0.5, color: '#fff', weight: 0.5, opacity: 1 } },
+        { get: function(obj, name) { return Object.prototype.hasOwnProperty.call(obj, name) ? obj[name] : hiddenStyle; } }
+      );
+      _gsiBldgVG = L.vectorGrid.protobuf(
+        'https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf',
+        {
+          minZoom: 4, maxZoom: 16,
+          vectorTileLayerStyles: styles,
+          interactive: false,
+          attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
+        }
+      );
+    }
+    if (!map.hasLayer(_gsiBldgVG)) map.addLayer(_gsiBldgVG);
+  } else if (_gsiBldgVG && !show) {
+    map.removeLayer(_gsiBldgVG);
+  }
 }
 
 // ── ズームインジケーター ──────────────────────────────────────
