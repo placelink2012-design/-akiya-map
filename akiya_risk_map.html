@@ -123,14 +123,14 @@ var streetLayer = L.tileLayer(
 // ── エリア別建物ポリゴン (OSM Overpass API) ──────────────────
 // 全体bbox 26.05,127.62,26.28,127.87 を3行×2列に均等分割
 // 緯度境界: 26.05 / 26.1267 / 26.2033 / 26.28
-// 経度境界: 127.62 / 127.745 / 127.87
+// 経度境界: 127.62 / 127.70 / 127.87
 var MUNIS = {
-  nw: { label:'北西エリア', bbox:'26.2033,127.62,26.28,127.745',  polygons:[], layer:null, loaded:false, loading:false },
-  ne: { label:'北東エリア', bbox:'26.2033,127.745,26.28,127.87',  polygons:[], layer:null, loaded:false, loading:false },
-  cw: { label:'中西エリア', bbox:'26.1267,127.62,26.2033,127.745',polygons:[], layer:null, loaded:false, loading:false },
-  ce: { label:'中東エリア', bbox:'26.1267,127.745,26.2033,127.87',polygons:[], layer:null, loaded:false, loading:false },
-  sw: { label:'南西エリア', bbox:'26.05,127.62,26.1267,127.745',  polygons:[], layer:null, loaded:false, loading:false },
-  se: { label:'南東エリア', bbox:'26.05,127.745,26.1267,127.87',  polygons:[], layer:null, loaded:false, loading:false }
+  nw: { label:'北西エリア', bbox:'26.2033,127.62,26.28,127.70',  polygons:[], layer:null, loaded:false, loading:false },
+  ne: { label:'北東エリア', bbox:'26.2033,127.70,26.28,127.87',  polygons:[], layer:null, loaded:false, loading:false },
+  cw: { label:'中西エリア', bbox:'26.1267,127.62,26.2033,127.70',polygons:[], layer:null, loaded:false, loading:false },
+  ce: { label:'中東エリア', bbox:'26.1267,127.70,26.2033,127.87',polygons:[], layer:null, loaded:false, loading:false },
+  sw: { label:'南西エリア', bbox:'26.05,127.62,26.1267,127.70',  polygons:[], layer:null, loaded:false, loading:false },
+  se: { label:'南東エリア', bbox:'26.05,127.70,26.1267,127.87',  polygons:[], layer:null, loaded:false, loading:false }
 };
 
 var _overpassEndpoint = 'https://overpass-api.de/api/interpreter';
