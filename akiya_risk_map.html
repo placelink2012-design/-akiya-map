@@ -7,7 +7,6 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.vectorgrid@latest/dist/Leaflet.VectorGrid.bundled.js"></script>
-  <script src="https://unpkg.com/pbf@3.3.2/dist/pbf.js"></script>
   <style>
     html, body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; }
     #map { position:fixed; top:0; bottom:0; left:0; right:0; }
@@ -157,14 +156,54 @@ function _initOverviewVG() {
   });
 }
 
-// ── Pbf を使った最小 MVT パーサー ──────────────────────────
-// @mapbox/vector-tile はブラウザ向けビルドが存在しないため
-// window.Pbf (pbf@3.3.2 で公開) でレイヤー/フィーチャーを手動デコード
+// ── インライン PBF デコーダー（外部ライブラリ不要） ────────────
+function _PBFReader(u8) { this.buf = u8; this.pos = 0; this.len = u8.length; }
+_PBFReader.prototype = {
+  readVarint: function() {
+    var b, val = 0, shift = 0;
+    do { b = this.buf[this.pos++]; val |= (b & 0x7f) << shift; shift += 7; } while (b & 0x80);
+    return val >>> 0;
+  },
+  readString: function() {
+    var n = this.readVarint(), end = this.pos + n, s = '';
+    while (this.pos < end) {
+      var c = this.buf[this.pos++];
+      if (c < 0x80) { s += String.fromCharCode(c); }
+      else if (c < 0xE0) { s += String.fromCharCode(((c & 0x1f) << 6) | (this.buf[this.pos++] & 0x3f)); }
+      else { s += String.fromCharCode(((c & 0x0f) << 12) | ((this.buf[this.pos++] & 0x3f) << 6) | (this.buf[this.pos++] & 0x3f)); }
+    }
+    return s;
+  },
+  readPackedVarint: function() {
+    var n = this.readVarint(), end = this.pos + n, arr = [];
+    while (this.pos < end) arr.push(this.readVarint());
+    return arr;
+  },
+  skip: function(type) {
+    if      (type === 0) { while (this.buf[this.pos++] & 0x80); }
+    else if (type === 2) { this.pos += this.readVarint(); }
+    else if (type === 5) { this.pos += 4; }
+    else if (type === 1) { this.pos += 8; }
+  },
+  readFields: function(fn, obj, end) {
+    end = (end === undefined) ? this.len : end;
+    while (this.pos < end) {
+      var key = this.readVarint(), tag = key >> 3, type = key & 7, start = this.pos;
+      fn(tag, obj, this);
+      if (this.pos === start) this.skip(type);
+    }
+    return obj;
+  },
+  readMessage: function(fn, obj) {
+    var n = this.readVarint();
+    return this.readFields(fn, obj, this.pos + n);
+  }
+};
 
-function _readLayerFields(tag, L, pbf) {
-  if      (tag === 1) L.name   = pbf.readString();
-  else if (tag === 2) L.feats.push(pbf.readMessage(_readFeatFields, {type:0, geom:[]}));
-  else if (tag === 5) L.extent = pbf.readVarint();
+function _readLayerFields(tag, lyr, pbf) {
+  if      (tag === 1) lyr.name   = pbf.readString();
+  else if (tag === 2) lyr.feats.push(pbf.readMessage(_readFeatFields, {type:0, geom:[]}));
+  else if (tag === 5) lyr.extent = pbf.readVarint();
 }
 function _readFeatFields(tag, f, pbf) {
   if      (tag === 3) f.type = pbf.readVarint();
@@ -231,43 +270,58 @@ function _visibleTiles(tz) {
 
 // 詳細タイルを非同期フェッチ＋パース
 function _loadDetailTiles() {
-  _visibleTiles(GSI_DETAIL_ZOOM).forEach(function(t) {
+  var tiles = _visibleTiles(GSI_DETAIL_ZOOM);
+  console.log('[GSI] _loadDetailTiles zoom='+map.getZoom().toFixed(1)+' tiles='+tiles.length);
+  tiles.forEach(function(t) {
     var key = t.z+'/'+t.x+'/'+t.y;
-    if (_tileDone[key]) return;
+    if (_tileDone[key]) { console.log('[GSI]   skip (cached)', key); return; }
     _tileDone[key] = true;
     _loadingN++;
     _setGsiStatus('読み込み中(' + _loadingN + ')...');
 
-    fetch(GSI_URL.replace('{z}',t.z).replace('{x}',t.x).replace('{y}',t.y))
-      .then(function(r){ if(!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    var url = GSI_URL.replace('{z}',t.z).replace('{x}',t.x).replace('{y}',t.y);
+    console.log('[GSI]   fetch', url);
+    fetch(url)
+      .then(function(r){
+        console.log('[GSI]   response', key, r.status, r.headers.get('content-type'));
+        if(!r.ok) throw new Error(r.status);
+        return r.arrayBuffer();
+      })
       .then(function(buf){ _parseTile(buf, t.z, t.x, t.y); })
-      .catch(function(e){ console.warn('tile '+key, e.message); })
+      .catch(function(e){ console.error('[GSI] tile error', key, e.message); })
       .finally(function(){ _loadingN=Math.max(0,_loadingN-1); _updateGsiStatus(); });
   });
 }
 
 // ArrayBuffer → BldA/SBldA ポリゴンを _gsiDetailLayer に追加
 function _parseTile(buf, tz, tx, ty) {
-  var pbf = new Pbf(new Uint8Array(buf));
+  var KEY = tz+'/'+tx+'/'+ty;
+  console.log('[GSI] parseTile', KEY, buf.byteLength+'B');
+
+  var pbf = new _PBFReader(new Uint8Array(buf));
   var WANT = {BldA:1, SBldA:1};
   var riskHighOnly = document.getElementById('chk-risk-high').checked;
   var showing = document.getElementById('chk-gsi-bldg').checked &&
                 Math.round(map.getZoom()) >= GSI_DETAIL_ZOOM &&
                 map.hasLayer(_gsiDetailLayer);
   var added = 0;
+  var layerNames = [];
 
   pbf.readFields(function(tag, _, pbf) {
     if (tag !== 3) return;
     var layer = pbf.readMessage(_readLayerFields, {name:'', extent:4096, feats:[]});
+    layerNames.push(layer.name + '[' + layer.feats.length + ']');
     if (!WANT[layer.name]) return;
+
     var ext = layer.extent || 4096;
+    var polyCount=0, skipType=0, skipGeom=0, skipArea=0;
 
     layer.feats.forEach(function(feat) {
-      if (feat.type !== 3 || !feat.geom || feat.geom.length===0) return;
+      if (feat.type !== 3 || !feat.geom || feat.geom.length===0) { skipType++; return; }
       var rings = _decodeGeom(feat.geom);
-      if (!rings || !rings[0] || rings[0].length < 3) return;
+      if (!rings || !rings[0] || rings[0].length < 3) { skipGeom++; return; }
       var area = _ringArea(rings[0], tx, ty, tz, ext);
-      if (area <= 0 || area > 100000) return;
+      if (area <= 0 || area > 100000) { skipArea++; return; }
 
       var cat, color, label;
       if (area >= 100)     { cat='high'; color='#E24B4A'; label='広（100㎡以上）'; }
@@ -287,8 +341,14 @@ function _parseTile(buf, tz, tx, ty) {
       _gsiPolygons.push({poly:poly, cat:cat, lat:cLat, lng:cLng});
       if (showing && (cat==='high' || !riskHighOnly)) poly.addTo(_gsiDetailLayer);
       added++;
+      polyCount++;
     });
+
+    console.log('[GSI]   layer', layer.name, 'feats='+layer.feats.length,
+      'poly='+polyCount, 'skipType='+skipType, 'skipGeom='+skipGeom, 'skipArea='+skipArea);
   });
+
+  console.log('[GSI] tile', KEY, 'layers=['+layerNames.join(',')+'] added='+added, 'total='+_gsiPolygons.length);
 
   if (added > 0) {
     _updateGsiStatus();
@@ -327,6 +387,7 @@ function _rebuildDetailLayer() {
 function _applyVisibility() {
   var zoom   = Math.round(map.getZoom());
   var gsiOn  = document.getElementById('chk-gsi-bldg').checked;
+  console.log('[GSI] _applyVisibility zoom='+zoom+' gsiOn='+gsiOn+' detailZoom='+GSI_DETAIL_ZOOM);
 
   _initOverviewVG();
 
