@@ -304,6 +304,11 @@ function _applyVisibility() {
     });
     if (!map.hasLayer(m.layer)) map.addLayer(m.layer);
   });
+  // 混在グリッドはズームに関わらず常時表示を維持
+  var mixedCb = document.getElementById('chk-mixed');
+  if (mixedCb && mixedCb.checked && !map.hasLayer(mixedGridLayer)) {
+    map.addLayer(mixedGridLayer);
+  }
 }
 
 
