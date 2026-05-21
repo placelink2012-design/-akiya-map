@@ -59,7 +59,11 @@
   <label class="cl"><input type="checkbox" id="chk-sw" onchange="toggleMuni('sw',this.checked)"> 南西エリア</label>
   <div id="status-sw" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
   <label class="cl"><input type="checkbox" id="chk-se" onchange="toggleMuni('se',this.checked)"> 南東エリア</label>
-  <div id="status-se" style="font-size:10px;color:#888;margin:0 0 8px 18px"></div>
+  <div id="status-se" style="font-size:10px;color:#888;margin:0 0 6px 18px"></div>
+  <label class="cl">
+    <input type="checkbox" id="chk-risk-high" onchange="_applyVisibility()"> リスク高のみ表示
+  </label>
+  <div style="font-size:10px;color:#888;margin:2px 0 8px 4px">※ズーム16以上で表示</div>
 
   <div class="sl">その他</div>
   <label class="cl" style="margin-bottom:8px">
@@ -84,6 +88,7 @@
 // ── マップ初期化 ─────────────────────────────────────────────
 var map = L.map('map', {center: [26.155, 127.675], zoom: 14});
 window.addEventListener('load', function() { map.invalidateSize(); });
+map.on('zoomend', _applyVisibility);
 
 // ── ベースマップ ─────────────────────────────────────────────
 var aerialLayer = L.tileLayer(
@@ -101,12 +106,12 @@ var streetLayer = L.tileLayer(
 // 緯度境界: 26.05 / 26.1267 / 26.2033 / 26.28
 // 経度境界: 127.62 / 127.745 / 127.87
 var MUNIS = {
-  nw: { label:'北西エリア', bbox:'26.2033,127.62,26.28,127.745',  layer:null, loaded:false, loading:false },
-  ne: { label:'北東エリア', bbox:'26.2033,127.745,26.28,127.87',  layer:null, loaded:false, loading:false },
-  cw: { label:'中西エリア', bbox:'26.1267,127.62,26.2033,127.745',layer:null, loaded:false, loading:false },
-  ce: { label:'中東エリア', bbox:'26.1267,127.745,26.2033,127.87',layer:null, loaded:false, loading:false },
-  sw: { label:'南西エリア', bbox:'26.05,127.62,26.1267,127.745',  layer:null, loaded:false, loading:false },
-  se: { label:'南東エリア', bbox:'26.05,127.745,26.1267,127.87',  layer:null, loaded:false, loading:false }
+  nw: { label:'北西エリア', bbox:'26.2033,127.62,26.28,127.745',  layerHigh:null, layerMid:null, layerLow:null, loaded:false, loading:false },
+  ne: { label:'北東エリア', bbox:'26.2033,127.745,26.28,127.87',  layerHigh:null, layerMid:null, layerLow:null, loaded:false, loading:false },
+  cw: { label:'中西エリア', bbox:'26.1267,127.62,26.2033,127.745',layerHigh:null, layerMid:null, layerLow:null, loaded:false, loading:false },
+  ce: { label:'中東エリア', bbox:'26.1267,127.745,26.2033,127.87',layerHigh:null, layerMid:null, layerLow:null, loaded:false, loading:false },
+  sw: { label:'南西エリア', bbox:'26.05,127.62,26.1267,127.745',  layerHigh:null, layerMid:null, layerLow:null, loaded:false, loading:false },
+  se: { label:'南東エリア', bbox:'26.05,127.745,26.1267,127.87',  layerHigh:null, layerMid:null, layerLow:null, loaded:false, loading:false }
 };
 
 var _overpassEndpoint = 'https://overpass-api.de/api/interpreter';
@@ -142,12 +147,14 @@ function toggleMuni(key, show) {
   if (!m) return;
   if (show) {
     if (m.loaded) {
-      map.addLayer(m.layer);
+      _applyVisibility();
     } else if (!m.loading) {
       _loadMuniBuildings(key);
     }
   } else {
-    if (m.layer) map.removeLayer(m.layer);
+    if (m.layerHigh) map.removeLayer(m.layerHigh);
+    if (m.layerMid)  map.removeLayer(m.layerMid);
+    if (m.layerLow)  map.removeLayer(m.layerLow);
   }
 }
 
@@ -222,7 +229,9 @@ function _renderMuniBuildings(key, data) {
     if (el.type === 'node') nodes[el.id] = [el.lat, el.lon];
   });
 
-  m.layer = L.layerGroup();
+  m.layerHigh = L.layerGroup();
+  m.layerMid  = L.layerGroup();
+  m.layerLow  = L.layerGroup();
   var count = 0, skipped = 0;
 
   data.elements.forEach(function(el) {
@@ -231,12 +240,18 @@ function _renderMuniBuildings(key, data) {
     if (coords.length < 3) { skipped++; return; }
     var area = calcAreaM2(coords);
     if (area <= 0 || area > 100000) { skipped++; return; }
-    var color = area >= 100 ? '#E24B4A' : area >= 60 ? '#EF9F27' : '#1D9E75';
-    var cat   = area >= 100 ? '広（100㎡以上）' : area >= 60 ? '中（60〜100㎡）' : '小（60㎡未満）';
+    var color, cat, targetLayer;
+    if (area >= 100) {
+      color = '#E24B4A'; cat = '広（100㎡以上）'; targetLayer = m.layerHigh;
+    } else if (area >= 60) {
+      color = '#EF9F27'; cat = '中（60〜100㎡）'; targetLayer = m.layerMid;
+    } else {
+      color = '#1D9E75'; cat = '小（60㎡未満）';  targetLayer = m.layerLow;
+    }
     L.polygon(coords, {
       color: '#fff', weight: 0.5, fillColor: color, fillOpacity: 0.65
     }).bindTooltip(Math.round(area) + '㎡ — ' + cat, { sticky: true })
-      .addTo(m.layer);
+      .addTo(targetLayer);
     count++;
   });
 
@@ -244,10 +259,35 @@ function _renderMuniBuildings(key, data) {
   m.loading = false;
 
   var cb = document.getElementById('chk-' + key);
-  if (cb && cb.checked) map.addLayer(m.layer);
+  if (cb && cb.checked) _applyVisibility();
 
   _setMuniStatus(key, '#1a7a4a', count.toLocaleString() + '棟');
   console.log(m.label + ': ' + count + '棟, ' + skipped + 'スキップ');
+}
+
+function _applyVisibility() {
+  var zoom = map.getZoom();
+  var riskHighOnly = document.getElementById('chk-risk-high').checked;
+  Object.keys(MUNIS).forEach(function(key) {
+    var m = MUNIS[key];
+    if (!m.loaded) return;
+    var cb = document.getElementById('chk-' + key);
+    var areaOn = cb && cb.checked;
+    // High (赤): zoom >= 16 かつ エリアON
+    if (areaOn && zoom >= 16) {
+      map.addLayer(m.layerHigh);
+    } else {
+      map.removeLayer(m.layerHigh);
+    }
+    // Mid/Low: zoom >= 17 かつ エリアON かつ リスク高のみ非チェック
+    if (areaOn && zoom >= 17 && !riskHighOnly) {
+      map.addLayer(m.layerMid);
+      map.addLayer(m.layerLow);
+    } else {
+      map.removeLayer(m.layerMid);
+      map.removeLayer(m.layerLow);
+    }
+  });
 }
 
 
