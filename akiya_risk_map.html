@@ -56,6 +56,10 @@
   </label>
 
   <div class="sl">エリア別建物（OSM）</div>
+  <label class="cl" style="margin-bottom:4px">
+    <input type="checkbox" id="chk-area-bounds" checked
+           onchange="toggleLayer(areaGridLayer, this.checked)"> エリア境界線
+  </label>
   <label class="cl"><input type="checkbox" id="chk-nw" onchange="toggleMuni('nw',this.checked)"> 北西エリア</label>
   <div id="status-nw" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
   <label class="cl"><input type="checkbox" id="chk-ne" onchange="toggleMuni('ne',this.checked)"> 北東エリア</label>
@@ -378,6 +382,43 @@ function switchBasemap(val) {
     map.addLayer(streetLayer);
   }
 }
+
+
+// ── エリア境界線 ──────────────────────────────────────────────
+var MUNI_COLORS = {
+  nw: '#3498DB', ne: '#E67E22', cw: '#27AE60',
+  ce: '#E74C3C', sw: '#8E44AD', se: '#16A085'
+};
+var areaGridLayer = L.layerGroup().addTo(map);
+
+(function() {
+  Object.keys(MUNIS).forEach(function(key) {
+    var m = MUNIS[key];
+    var color = MUNI_COLORS[key];
+    var p = m.bbox.split(',').map(Number); // [minLat, minLng, maxLat, maxLng]
+    var cLat = (p[0] + p[2]) / 2;
+    var cLng = (p[1] + p[3]) / 2;
+
+    L.rectangle([[p[0], p[1]], [p[2], p[3]]], {
+      color: color, weight: 2,
+      fillColor: color, fillOpacity: 0.07,
+      dashArray: '8,5'
+    }).addTo(areaGridLayer);
+
+    L.marker([cLat, cLng], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="color:' + color + ';font-weight:bold;font-size:12px;' +
+              'font-family:sans-serif;background:rgba(255,255,255,0.85);' +
+              'padding:2px 8px;border-radius:4px;border:1.5px solid ' + color + ';' +
+              'white-space:nowrap;transform:translate(-50%,-50%);pointer-events:none">' +
+              m.label + '</div>',
+        iconSize: [0, 0], iconAnchor: [0, 0]
+      }),
+      interactive: false
+    }).addTo(areaGridLayer);
+  });
+})();
 
 
 // ===== 空き家マップ Supabase連携 =====
