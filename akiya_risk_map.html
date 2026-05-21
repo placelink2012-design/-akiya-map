@@ -107,7 +107,8 @@
 var map = L.map('map', {center: [26.155, 127.675], zoom: 14});
 window.addEventListener('load', function() { map.invalidateSize(); });
 map.on('zoom', _updateZoomIndicator);
-map.on('zoomend', function() { _applyVisibility(); _updateZoomIndicator(); });
+map.on('zoomend', function() { _applyVisibility(); _updateZoomIndicator(); _autoLoadVisibleAreas(); });
+map.on('moveend', _autoLoadVisibleAreas);
 
 // ── ベースマップ ─────────────────────────────────────────────
 var aerialLayer = L.tileLayer(
@@ -121,9 +122,9 @@ var streetLayer = L.tileLayer(
 );
 
 // ── エリア別建物ポリゴン (OSM Overpass API) ──────────────────
-// 全体bbox 26.05,127.62,26.28,127.87 を3行×2列に均等分割
-// 緯度境界: 26.05 / 26.1267 / 26.2033 / 26.28
-// 経度境界: 127.62 / 127.70 / 127.87
+// 全体bbox 26.05,127.59,26.28,127.87 を3行×2列に分割（中西のみ西端127.59・北端26.22）
+// 緯度境界: 26.05 / 26.1267 / 26.2033 / 26.28（中西は26.22まで）
+// 経度境界: 127.59(中西) / 127.62(その他西側) / 127.70 / 127.87
 var MUNIS = {
   nw: { label:'北西エリア', bbox:'26.2033,127.62,26.28,127.70',  polygons:[], layer:null, loaded:false, loading:false },
   ne: { label:'北東エリア', bbox:'26.2033,127.70,26.28,127.87',  polygons:[], layer:null, loaded:false, loading:false },
@@ -315,6 +316,21 @@ function _applyVisibility() {
   }
 }
 
+// ズーム16以上でマップ中心のエリアを自動ロード（チェックボックスも自動ON）
+function _autoLoadVisibleAreas() {
+  if (Math.round(map.getZoom()) < 16) return;
+  var c = map.getCenter();
+  Object.keys(MUNIS).forEach(function(key) {
+    var m = MUNIS[key];
+    if (m.loaded || m.loading) return;
+    var p = m.bbox.split(',').map(Number); // [minLat,minLng,maxLat,maxLng]
+    if (c.lat >= p[0] && c.lat <= p[2] && c.lng >= p[1] && c.lng <= p[3]) {
+      var cb = document.getElementById('chk-' + key);
+      if (cb) cb.checked = true;
+      _loadMuniBuildings(key);
+    }
+  });
+}
 
 
 // ── 混在リスクグリッド ──────────────────────────────────────
