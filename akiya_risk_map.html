@@ -47,19 +47,19 @@
            onchange="switchBasemap(this.value)"> 標準地図
   </label>
 
-  <div class="sl">市町村別建物（OSM）</div>
-  <label class="cl"><input type="checkbox" id="chk-tomigusuku" onchange="toggleMuni('tomigusuku',this.checked)"> 豊見城市</label>
-  <div id="status-tomigusuku" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
-  <label class="cl"><input type="checkbox" id="chk-naha" onchange="toggleMuni('naha',this.checked)"> 那覇市</label>
-  <div id="status-naha" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
-  <label class="cl"><input type="checkbox" id="chk-itoman" onchange="toggleMuni('itoman',this.checked)"> 糸満市</label>
-  <div id="status-itoman" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
-  <label class="cl"><input type="checkbox" id="chk-nanjo" onchange="toggleMuni('nanjo',this.checked)"> 南城市</label>
-  <div id="status-nanjo" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
-  <label class="cl"><input type="checkbox" id="chk-yaese" onchange="toggleMuni('yaese',this.checked)"> 八重瀬町</label>
-  <div id="status-yaese" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
-  <label class="cl"><input type="checkbox" id="chk-haebaru" onchange="toggleMuni('haebaru',this.checked)"> 南風原町</label>
-  <div id="status-haebaru" style="font-size:10px;color:#888;margin:0 0 8px 18px"></div>
+  <div class="sl">エリア別建物（OSM）</div>
+  <label class="cl"><input type="checkbox" id="chk-nw" onchange="toggleMuni('nw',this.checked)"> 北西エリア</label>
+  <div id="status-nw" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-ne" onchange="toggleMuni('ne',this.checked)"> 北東エリア</label>
+  <div id="status-ne" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-cw" onchange="toggleMuni('cw',this.checked)"> 中西エリア</label>
+  <div id="status-cw" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-ce" onchange="toggleMuni('ce',this.checked)"> 中東エリア</label>
+  <div id="status-ce" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-sw" onchange="toggleMuni('sw',this.checked)"> 南西エリア</label>
+  <div id="status-sw" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-se" onchange="toggleMuni('se',this.checked)"> 南東エリア</label>
+  <div id="status-se" style="font-size:10px;color:#888;margin:0 0 8px 18px"></div>
 
   <div class="sl">その他</div>
   <label class="cl" style="margin-bottom:8px">
@@ -96,14 +96,17 @@ var streetLayer = L.tileLayer(
   {attribution: 'CartoDB', subdomains: 'abcd', maxZoom: 20}
 );
 
-// ── 市町村別建物ポリゴン (OSM Overpass API) ─────────────────
+// ── エリア別建物ポリゴン (OSM Overpass API) ──────────────────
+// 全体bbox 26.05,127.62,26.28,127.87 を3行×2列に均等分割
+// 緯度境界: 26.05 / 26.1267 / 26.2033 / 26.28
+// 経度境界: 127.62 / 127.745 / 127.87
 var MUNIS = {
-  tomigusuku: { label:'豊見城市', bbox:'26.09,127.63,26.175,127.72', layer:null, loaded:false, loading:false },
-  naha:       { label:'那覇市',   bbox:'26.19,127.65,26.27,127.73', layer:null, loaded:false, loading:false },
-  itoman:     { label:'糸満市',   bbox:'26.06,127.61,26.17,127.73', layer:null, loaded:false, loading:false },
-  nanjo:      { label:'南城市',   bbox:'26.11,127.71,26.24,127.87', layer:null, loaded:false, loading:false },
-  yaese:      { label:'八重瀬町', bbox:'26.09,127.69,26.18,127.79', layer:null, loaded:false, loading:false },
-  haebaru:    { label:'南風原町', bbox:'26.16,127.70,26.22,127.78', layer:null, loaded:false, loading:false }
+  nw: { label:'北西エリア', bbox:'26.2033,127.62,26.28,127.745',  layer:null, loaded:false, loading:false },
+  ne: { label:'北東エリア', bbox:'26.2033,127.745,26.28,127.87',  layer:null, loaded:false, loading:false },
+  cw: { label:'中西エリア', bbox:'26.1267,127.62,26.2033,127.745',layer:null, loaded:false, loading:false },
+  ce: { label:'中東エリア', bbox:'26.1267,127.745,26.2033,127.87',layer:null, loaded:false, loading:false },
+  sw: { label:'南西エリア', bbox:'26.05,127.62,26.1267,127.745',  layer:null, loaded:false, loading:false },
+  se: { label:'南東エリア', bbox:'26.05,127.745,26.1267,127.87',  layer:null, loaded:false, loading:false }
 };
 
 var _overpassEndpoint = 'https://overpass-api.de/api/interpreter';
