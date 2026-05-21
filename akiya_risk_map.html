@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.vectorgrid@latest/dist/Leaflet.VectorGrid.bundled.js"></script>
+  <script src="https://unpkg.com/pbf@3.3.2/dist/pbf.js"></script>
   <style>
     html, body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; }
     #map { position:fixed; top:0; bottom:0; left:0; right:0; }
@@ -84,7 +85,7 @@
   <span style="display:inline-block;width:14px;height:14px;background:#EF9F27;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 中（60〜100㎡）リスク中<br>
   <span style="display:inline-block;width:14px;height:14px;background:#1D9E75;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 小（60㎡未満）リスク低<br>
   <span style="display:inline-block;width:14px;height:14px;background:#4A90D9;vertical-align:middle;border-radius:2px;margin-right:4px;opacity:0.8"></span>建物（広域 ズーム15以下）<br>
-  <span style="display:inline-block;width:14px;height:14px;background:rgba(155,48,255,0.45);vertical-align:middle;border-radius:2px;margin-right:4px;border:1px solid #9B30FF"></span>混在（広＋小 100mグリッド）<br>
+  <span style="display:inline-block;width:14px;height:14px;background:rgba(155,48,255,0.45);vertical-align:middle;border-radius:2px;margin-right:4px;border:1px solid #9B30FF"></span>混在（広＋小 5棟以上グリッド）<br>
   <hr style="margin:4px 0">
   <small style="color:#666">建物: 国土地理院 基盤地図情報</small>
 </div>
@@ -92,10 +93,14 @@
 <script>
 // ── マップ初期化 ────────────────────────────────────────────
 var map = L.map('map', {center: [26.155, 127.675], zoom: 14});
-window.addEventListener('load', function() { map.invalidateSize(); _updateZoomIndicator(); _applyVisibility(); });
-map.on('zoom', _updateZoomIndicator);
-map.on('zoomend', function() { _updateZoomIndicator(); });
-// moveend は不要（VectorGridが自動で新タイルを取得する）
+window.addEventListener('load', function() {
+  map.invalidateSize();
+  _updateZoomIndicator();
+  _applyVisibility();
+});
+map.on('zoom',    _updateZoomIndicator);
+map.on('zoomend', function() { _updateZoomIndicator(); _applyVisibility(); });
+map.on('moveend', _applyVisibility);
 
 // ── ベースマップ ────────────────────────────────────────────
 var aerialLayer = L.tileLayer(
@@ -118,165 +123,237 @@ function switchBasemap(val) {
   else { map.removeLayer(aerialLayer); map.addLayer(streetLayer); }
 }
 
-// ── 地理院建物ポリゴン（VectorGrid + _getVectorTilePromise override） ───
-var GSI_URL = 'https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf';
-var GSI_DETAIL_ZOOM = 16; // このタイルズーム以上で面積色分け
+// ── 地理院建物ポリゴン ─────────────────────────────────────
+var GSI_URL          = 'https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf';
+var GSI_DETAIL_ZOOM  = 16;  // このタイルズーム以上で面積色分け
+var MIXED_MIN_COUNT  = 5;   // 混在グリッドの最低建物棟数
 
-var _gsiVG = null;
-var _gsiPolygons = [];     // {cat, lat, lng} — 混在グリッド用
-var _processedTiles = {};  // key→true で二重処理防止
+// 広域表示用 VectorGrid（ズーム <16、青単色）
+var _gsiOverviewVG = null;
 
-var HIDDEN = {fill:false, stroke:false, weight:0, fillOpacity:0, opacity:0};
-var BLUE   = {fill:true, fillColor:'#4A90D9', fillOpacity:0.6, color:'#fff', weight:0.5, opacity:1};
+// 詳細表示用（ズーム >=16、面積色分け）
+var _gsiDetailLayer = L.layerGroup();
+var _gsiPolygons    = [];   // {poly, cat, lat, lng}
+var _tileDone       = {};   // 取得済みタイルキー
+var _loadingN       = 0;
+var _canvasR        = L.canvas({padding: 0.5});
 
-function _colorForArea(area) {
-  if (area >= 100) return '#E24B4A';
-  if (area >= 60)  return '#EF9F27';
-  return '#1D9E75';
-}
-
-// VectorGrid の style 関数: coords.z (タイルズーム) と props.__area を参照
-function _bldStyle(props, tileZoom) {
-  if (tileZoom < GSI_DETAIL_ZOOM) return BLUE;
-  var area = props.__area;
-  if (area === undefined) return BLUE; // 未解析時フォールバック
-  var riskHighOnly = document.getElementById('chk-risk-high').checked;
-  var cat = area >= 100 ? 'high' : area >= 60 ? 'mid' : 'low';
-  if (riskHighOnly && cat !== 'high') return HIDDEN;
-  return {fill:true, fillColor:_colorForArea(area), fillOpacity:0.65, color:'#fff', weight:0.5, opacity:1};
-}
-
-function _initGsiVG() {
-  if (_gsiVG) return;
-
-  // BldA/SBldA → _bldStyle、それ以外 → HIDDEN
-  var styleMap = {BldA: _bldStyle, SBldA: _bldStyle};
-  var styles = new Proxy(styleMap, {
-    get: function(obj, name) {
-      if (typeof name !== 'string') return obj[name];
-      return Object.prototype.hasOwnProperty.call(obj, name) ? obj[name] : HIDDEN;
+function _initOverviewVG() {
+  if (_gsiOverviewVG) return;
+  var bld = {fill:true, fillColor:'#4A90D9', fillOpacity:0.6, color:'#fff', weight:0.5, opacity:1};
+  var hid = {fill:false, stroke:false, weight:0, fillOpacity:0, opacity:0};
+  var map_ = {BldA: bld, SBldA: bld};
+  var styles = new Proxy(map_, {
+    get: function(o, n) {
+      if (typeof n !== 'string') return o[n];
+      return Object.prototype.hasOwnProperty.call(o, n) ? o[n] : hid;
     }
   });
-
-  _gsiVG = L.vectorGrid.protobuf(GSI_URL, {
-    minZoom: 1, maxNativeZoom: GSI_DETAIL_ZOOM, maxZoom: 22,
+  _gsiOverviewVG = L.vectorGrid.protobuf(GSI_URL, {
+    minZoom:1, maxNativeZoom:GSI_DETAIL_ZOOM, maxZoom:22,
     vectorTileLayerStyles: styles,
     interactive: false,
     attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
   });
+}
 
-  // ── _getVectorTilePromise をインスタンスでオーバーライド ──────────────
-  // VectorGrid が内部で解析した VectorTile オブジェクトを横取りし
-  // 各 feature の properties に __area を注入する
-  var _origGetVTP = _gsiVG._getVectorTilePromise.bind(_gsiVG);
-  _gsiVG._getVectorTilePromise = function(coords) {
-    return _origGetVTP(coords).then(function(vt) {
-      _injectAreas(vt, coords.x, coords.y, coords.z);
-      return vt; // VectorGrid の render に渡す
-    });
-  };
+// ── Pbf を使った最小 MVT パーサー ──────────────────────────
+// @mapbox/vector-tile はブラウザ向けビルドが存在しないため
+// window.Pbf (pbf@3.3.2 で公開) でレイヤー/フィーチャーを手動デコード
+
+function _readLayerFields(tag, L, pbf) {
+  if      (tag === 1) L.name   = pbf.readString();
+  else if (tag === 2) L.feats.push(pbf.readMessage(_readFeatFields, {type:0, geom:[]}));
+  else if (tag === 5) L.extent = pbf.readVarint();
+}
+function _readFeatFields(tag, f, pbf) {
+  if      (tag === 3) f.type = pbf.readVarint();
+  else if (tag === 4) f.geom = pbf.readPackedVarint();
+}
+
+// MVT コマンド列 → リング配列 [{x,y}]
+function _decodeGeom(cmds) {
+  var rings=[], ring=[], x=0, y=0, i=0;
+  while (i < cmds.length) {
+    var cl=cmds[i++], cmd=cl&7, cnt=cl>>3;
+    if (cmd === 1) {
+      if (ring.length) { rings.push(ring); ring=[]; }
+      while (cnt--) {
+        x += (cmds[i]>>1)^-(cmds[i++]&1);
+        y += (cmds[i]>>1)^-(cmds[i++]&1);
+        ring.push({x:x, y:y});
+      }
+    } else if (cmd === 2) {
+      while (cnt--) {
+        x += (cmds[i]>>1)^-(cmds[i++]&1);
+        y += (cmds[i]>>1)^-(cmds[i++]&1);
+        ring.push({x:x, y:y});
+      }
+    } else if (cmd === 7) {
+      if (ring.length) { ring.push(ring[0]); rings.push(ring); ring=[]; }
+    }
+  }
+  if (ring.length) rings.push(ring);
+  return rings;
 }
 
 // タイルピクセル → LatLng
 function _px2ll(tx, ty, tz, px, py, ext) {
   var n = Math.pow(2, tz);
-  var lng = (tx + px / ext) / n * 360 - 180;
-  var lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * (ty + py / ext) / n))) * 180 / Math.PI;
+  var lng = (tx + px/ext)/n*360 - 180;
+  var lat = Math.atan(Math.sinh(Math.PI*(1 - 2*(ty+py/ext)/n)))*180/Math.PI;
   return [lat, lng];
 }
 
 // 外周リング面積（ショーレース、沖縄固定スケール）
 function _ringArea(ring, tx, ty, tz, ext) {
-  var LAT_M = 111000, LNG_M = 111000 * Math.cos(26.15 * Math.PI / 180);
-  var pts = ring.map(function(p) { return _px2ll(tx, ty, tz, p.x, p.y, ext); });
-  var a = 0;
-  for (var i = 0, n = pts.length; i < n; i++) {
-    var j = (i + 1) % n;
-    a += (pts[i][1] * LNG_M) * (pts[j][0] * LAT_M) - (pts[j][1] * LNG_M) * (pts[i][0] * LAT_M);
+  var LAT_M=111000, LNG_M=111000*Math.cos(26.15*Math.PI/180);
+  var pts = ring.map(function(p){ return _px2ll(tx,ty,tz,p.x,p.y,ext); });
+  var a=0, n=pts.length;
+  for (var i=0; i<n; i++) {
+    var j=(i+1)%n;
+    a += (pts[i][1]*LNG_M)*(pts[j][0]*LAT_M) - (pts[j][1]*LNG_M)*(pts[i][0]*LAT_M);
   }
-  return Math.abs(a) / 2;
+  return Math.abs(a)/2;
 }
 
-// 解析済みタイルの BldA/SBldA レイヤーに面積を注入
-function _injectAreas(vt, tx, ty, tz) {
-  if (tz < GSI_DETAIL_ZOOM) return; // 広域ズームは青固定なのでスキップ
-  var key = tz + '/' + tx + '/' + ty;
-  var isNew = !_processedTiles[key];
-  _processedTiles[key] = true;
+// 可視タイル座標一覧（タイルズーム tz）
+function _visibleTiles(tz) {
+  var b=map.getBounds(), n=Math.pow(2,tz);
+  function lng2x(v){ return Math.floor((v+180)/360*n); }
+  function lat2y(v){ var r=v*Math.PI/180; return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n); }
+  var x0=lng2x(b.getWest()), x1=lng2x(b.getEast());
+  var y0=lat2y(b.getNorth()), y1=lat2y(b.getSouth());
+  var tiles=[];
+  for (var x=x0; x<=x1; x++) for (var y=y0; y<=y1; y++) tiles.push({z:tz,x:x,y:y});
+  return tiles;
+}
 
-  ['BldA', 'SBldA'].forEach(function(name) {
-    var layer = vt.layers[name];
-    if (!layer) return;
+// 詳細タイルを非同期フェッチ＋パース
+function _loadDetailTiles() {
+  _visibleTiles(GSI_DETAIL_ZOOM).forEach(function(t) {
+    var key = t.z+'/'+t.x+'/'+t.y;
+    if (_tileDone[key]) return;
+    _tileDone[key] = true;
+    _loadingN++;
+    _setGsiStatus('読み込み中(' + _loadingN + ')...');
+
+    fetch(GSI_URL.replace('{z}',t.z).replace('{x}',t.x).replace('{y}',t.y))
+      .then(function(r){ if(!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(function(buf){ _parseTile(buf, t.z, t.x, t.y); })
+      .catch(function(e){ console.warn('tile '+key, e.message); })
+      .finally(function(){ _loadingN=Math.max(0,_loadingN-1); _updateGsiStatus(); });
+  });
+}
+
+// ArrayBuffer → BldA/SBldA ポリゴンを _gsiDetailLayer に追加
+function _parseTile(buf, tz, tx, ty) {
+  var pbf = new Pbf(new Uint8Array(buf));
+  var WANT = {BldA:1, SBldA:1};
+  var riskHighOnly = document.getElementById('chk-risk-high').checked;
+  var showing = document.getElementById('chk-gsi-bldg').checked &&
+                Math.round(map.getZoom()) >= GSI_DETAIL_ZOOM &&
+                map.hasLayer(_gsiDetailLayer);
+  var added = 0;
+
+  pbf.readFields(function(tag, _, pbf) {
+    if (tag !== 3) return;
+    var layer = pbf.readMessage(_readLayerFields, {name:'', extent:4096, feats:[]});
+    if (!WANT[layer.name]) return;
     var ext = layer.extent || 4096;
-    var areas = new Array(layer.length); // index → area (m²)
 
-    for (var i = 0; i < layer.length; i++) {
-      try {
-        var feat = layer.feature(i);
-        if (feat.type !== 3) continue; // ポリゴンのみ
-        var geom = feat.loadGeometry();
-        if (!geom || !geom[0] || geom[0].length < 3) continue;
-        var area = _ringArea(geom[0], tx, ty, tz, ext);
-        if (area <= 0 || area > 100000) continue;
-        areas[i] = area;
+    layer.feats.forEach(function(feat) {
+      if (feat.type !== 3 || !feat.geom || feat.geom.length===0) return;
+      var rings = _decodeGeom(feat.geom);
+      if (!rings || !rings[0] || rings[0].length < 3) return;
+      var area = _ringArea(rings[0], tx, ty, tz, ext);
+      if (area <= 0 || area > 100000) return;
 
-        // 混在グリッド用に重心と分類を保存（新規タイルのみ）
-        if (isNew) {
-          var ring = geom[0];
-          var cLat = 0, cLng = 0;
-          ring.forEach(function(p) { var ll = _px2ll(tx, ty, tz, p.x, p.y, ext); cLat += ll[0]; cLng += ll[1]; });
-          cLat /= ring.length; cLng /= ring.length;
-          _gsiPolygons.push({cat: area >= 100 ? 'high' : area >= 60 ? 'mid' : 'low', lat: cLat, lng: cLng});
-        }
-      } catch(e) { /* 個別フィーチャーのエラーはスキップ */ }
-    }
+      var cat, color, label;
+      if (area >= 100)     { cat='high'; color='#E24B4A'; label='広（100㎡以上）'; }
+      else if (area >= 60) { cat='mid';  color='#EF9F27'; label='中（60〜100㎡）'; }
+      else                 { cat='low';  color='#1D9E75'; label='小（60㎡未満）';  }
 
-    // layer.feature() にパッチを当てて __area を properties に混入
-    // VectorGrid の render() はこのパッチ済みメソッドを呼ぶ
-    var _origFeature = layer.feature.bind(layer);
-    layer.feature = function(i) {
-      var f = _origFeature(i);
-      if (areas[i] !== undefined) {
-        f.properties = Object.assign({}, f.properties, {__area: areas[i]});
-      }
-      return f;
-    };
+      var coords = rings[0].map(function(p){ return _px2ll(tx,ty,tz,p.x,p.y,ext); });
+      var cLat=0, cLng=0;
+      coords.forEach(function(c){ cLat+=c[0]; cLng+=c[1]; });
+      cLat/=coords.length; cLng/=coords.length;
+
+      var poly = L.polygon(coords, {
+        color:'#fff', weight:0.5, fillColor:color, fillOpacity:0.65,
+        renderer: _canvasR
+      }).bindTooltip(Math.round(area)+'㎡ — '+label, {sticky:true});
+
+      _gsiPolygons.push({poly:poly, cat:cat, lat:cLat, lng:cLng});
+      if (showing && (cat==='high' || !riskHighOnly)) poly.addTo(_gsiDetailLayer);
+      added++;
+    });
   });
 
-  if (isNew) {
-    _updateMixedGrid();
+  if (added > 0) {
     _updateGsiStatus();
+    _updateMixedGrid();
   }
 }
 
-function _updateGsiStatus() {
+function _setGsiStatus(text, color) {
   var el = document.getElementById('status-gsi');
   if (!el) return;
-  el.style.color = '#1a7a4a';
-  el.textContent = _gsiPolygons.length.toLocaleString() + '棟分析済';
+  el.style.color = color || '#888';
+  el.textContent = text;
+}
+function _updateGsiStatus() {
+  if (_loadingN > 0) _setGsiStatus('読み込み中('+_loadingN+')...', '#888');
+  else               _setGsiStatus(_gsiPolygons.length.toLocaleString()+'棟分析済', '#1a7a4a');
 }
 
-// チェックボックス変更時：スタイル再適用のため redraw
+// riskHighOnly チェック変更時
 function _onFilterChange() {
-  if (!_gsiVG) return;
-  // redraw で既存タイルを再レンダリング（面積注入は _processedTiles で重複防止済み）
-  _gsiVG.redraw();
+  var zoom = Math.round(map.getZoom());
+  if (zoom >= GSI_DETAIL_ZOOM && map.hasLayer(_gsiDetailLayer)) {
+    _rebuildDetailLayer();
+  }
 }
 
-function _applyVisibility() {
-  _initGsiVG();
-  var gsiOn = document.getElementById('chk-gsi-bldg').checked;
-  if (gsiOn) { if (!map.hasLayer(_gsiVG)) map.addLayer(_gsiVG); }
-  else        { if ( map.hasLayer(_gsiVG)) map.removeLayer(_gsiVG); }
+function _rebuildDetailLayer() {
+  var riskHighOnly = document.getElementById('chk-risk-high').checked;
+  _gsiDetailLayer.clearLayers();
+  _gsiPolygons.forEach(function(item) {
+    if (item.cat==='high' || !riskHighOnly) item.poly.addTo(_gsiDetailLayer);
+  });
+}
 
+// ズーム・チェックボックスに応じてレイヤー切替
+function _applyVisibility() {
+  var zoom   = Math.round(map.getZoom());
+  var gsiOn  = document.getElementById('chk-gsi-bldg').checked;
+
+  _initOverviewVG();
+
+  if (!gsiOn) {
+    if (_gsiOverviewVG && map.hasLayer(_gsiOverviewVG)) map.removeLayer(_gsiOverviewVG);
+    if (map.hasLayer(_gsiDetailLayer)) map.removeLayer(_gsiDetailLayer);
+  } else if (zoom >= GSI_DETAIL_ZOOM) {
+    // 詳細モード：面積色分けポリゴン
+    if (_gsiOverviewVG && map.hasLayer(_gsiOverviewVG)) map.removeLayer(_gsiOverviewVG);
+    _rebuildDetailLayer();
+    if (!map.hasLayer(_gsiDetailLayer)) map.addLayer(_gsiDetailLayer);
+    _loadDetailTiles();
+  } else {
+    // 広域モード：VectorGrid（青）
+    if (map.hasLayer(_gsiDetailLayer)) map.removeLayer(_gsiDetailLayer);
+    if (!map.hasLayer(_gsiOverviewVG)) map.addLayer(_gsiOverviewVG);
+  }
+
+  // 混在グリッド
   var mixedOn = document.getElementById('chk-mixed').checked;
   if (mixedOn) { if (!map.hasLayer(mixedGridLayer)) map.addLayer(mixedGridLayer); }
   else         { if ( map.hasLayer(mixedGridLayer)) map.removeLayer(mixedGridLayer); }
 }
 
-// ── 混在リスクグリッド ─────────────────────────────────────
-var GRID_LAT = 100 / 111000;
-var GRID_LNG = 100 / (111000 * Math.cos(26.15 * Math.PI / 180));
+// ── 混在リスクグリッド（建物密度 5棟以上のみ表示） ──────────────
+var GRID_LAT = 100/111000;
+var GRID_LNG = 100/(111000*Math.cos(26.15*Math.PI/180));
 var GRID_ORIGIN_LAT = 26.05;
 var GRID_ORIGIN_LNG = 127.59;
 var mixedGridLayer = L.layerGroup().addTo(map);
@@ -284,63 +361,62 @@ var mixedGridLayer = L.layerGroup().addTo(map);
 function _updateMixedGrid() {
   var cells = {};
   _gsiPolygons.forEach(function(item) {
-    var r = Math.floor((item.lat - GRID_ORIGIN_LAT) / GRID_LAT);
-    var c = Math.floor((item.lng - GRID_ORIGIN_LNG) / GRID_LNG);
-    var k = r + '_' + c;
-    if (!cells[k]) cells[k] = {hasHigh:false, hasLow:false, r:r, c:c};
-    if (item.cat === 'high') cells[k].hasHigh = true;
-    if (item.cat === 'low')  cells[k].hasLow  = true;
+    var r = Math.floor((item.lat - GRID_ORIGIN_LAT)/GRID_LAT);
+    var c = Math.floor((item.lng - GRID_ORIGIN_LNG)/GRID_LNG);
+    var k = r+'_'+c;
+    if (!cells[k]) cells[k]={hasHigh:false, hasLow:false, count:0, r:r, c:c};
+    cells[k].count++;
+    if (item.cat==='high') cells[k].hasHigh=true;
+    if (item.cat==='low')  cells[k].hasLow =true;
   });
   mixedGridLayer.clearLayers();
-  var cnt = 0;
+  var cnt=0;
   Object.keys(cells).forEach(function(k) {
-    var cell = cells[k];
-    if (!cell.hasHigh || !cell.hasLow) return;
-    var lat1 = GRID_ORIGIN_LAT + cell.r * GRID_LAT;
-    var lng1 = GRID_ORIGIN_LNG + cell.c * GRID_LNG;
-    L.rectangle([[lat1, lng1], [lat1 + GRID_LAT, lng1 + GRID_LNG]], {
+    var cell=cells[k];
+    // 広＋小の混在 かつ 5棟以上のグリッドのみ表示（農地・森林を除外）
+    if (!cell.hasHigh || !cell.hasLow || cell.count < MIXED_MIN_COUNT) return;
+    var lat1=GRID_ORIGIN_LAT+cell.r*GRID_LAT, lng1=GRID_ORIGIN_LNG+cell.c*GRID_LNG;
+    L.rectangle([[lat1,lng1],[lat1+GRID_LAT,lng1+GRID_LNG]], {
       color:'#9B30FF', weight:1, fillColor:'#9B30FF', fillOpacity:0.35
-    }).bindTooltip('混在エリア（広＋小）', {sticky:true}).addTo(mixedGridLayer);
+    }).bindTooltip('混在エリア（広＋小 計'+cell.count+'棟）',{sticky:true}).addTo(mixedGridLayer);
     cnt++;
   });
-  var el = document.getElementById('status-mixed');
-  if (el) { el.style.color = cnt > 0 ? '#6600cc' : '#888'; el.textContent = cnt > 0 ? cnt + 'グリッド検出' : '検出なし'; }
+  var el=document.getElementById('status-mixed');
+  if (el) { el.style.color=cnt>0?'#6600cc':'#888'; el.textContent=cnt>0?cnt+'グリッド検出':'検出なし'; }
 }
 
 // ── 空き家マップ Supabase連携 ──────────────────────────────
-var SB_URL = 'https://okijwcasxxwqmhofndeg.supabase.co';
-var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9raWp3Y2FzeHh3cW1ob2ZuZGVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyMTg5MjgsImV4cCI6MjA5NDc5NDkyOH0.rdp7YZw-Qm6BMzbJTn8BznvgP5vcq7jq0IPVg0F_QHw';
+var SB_URL='https://okijwcasxxwqmhofndeg.supabase.co';
+var SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9raWp3Y2FzeHh3cW1ob2ZuZGVnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyMTg5MjgsImV4cCI6MjA5NDc5NDkyOH0.rdp7YZw-Qm6BMzbJTn8BznvgP5vcq7jq0IPVg0F_QHw';
 var akiyaLayer = L.layerGroup().addTo(map);
 
 async function loadAkiyaPins() {
   try {
     var res = await fetch(
-      SB_URL + '/rest/v1/akiya_records?order=created_at.desc&limit=500&select=id,address,score,gps,judge,cond',
-      {headers: {'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY}}
+      SB_URL+'/rest/v1/akiya_records?order=created_at.desc&limit=500&select=id,address,score,gps,judge,cond',
+      {headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}}
     );
     var data = await res.json();
     if (!Array.isArray(data)) return;
     akiyaLayer.clearLayers();
     data.forEach(function(r) {
-      if (!r.gps || !r.gps.lat || !r.gps.lng) return;
-      var score = r.score || 0;
-      var color = score >= 15 ? '#E24B4A' : score >= 7 ? '#EF9F27' : '#1D9E75';
-      var icon = L.divIcon({
-        className: '',
-        html: '<div style="width:30px;height:30px;background:' + color + ';border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:700;line-height:1;">' + score + '</div>',
-        iconSize: [30, 30], iconAnchor: [15, 15]
+      if (!r.gps||!r.gps.lat||!r.gps.lng) return;
+      var score=r.score||0;
+      var color=score>=15?'#E24B4A':score>=7?'#EF9F27':'#1D9E75';
+      var icon=L.divIcon({
+        className:'',
+        html:'<div style="width:30px;height:30px;background:'+color+';border-radius:50%;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;color:white;font-size:11px;font-weight:700;line-height:1;">'+score+'</div>',
+        iconSize:[30,30], iconAnchor:[15,15]
       });
-      var marker = L.marker([r.gps.lat, r.gps.lng], {icon: icon});
-      marker.bindPopup(
-        '<div style="font-size:12px;min-width:170px;font-family:sans-serif">' +
-        '<div style="font-weight:700;margin-bottom:5px;line-height:1.4">' + (r.address || '住所不明') + '</div>' +
-        '<div style="margin-bottom:2px">スコア: <strong style="color:' + color + ';font-size:14px">' + score + '</strong></div>' +
-        '<div style="margin-bottom:2px">判定: ' + (r.judge || '-') + '</div>' +
-        '<div>状態: ' + (r.cond || '-') + '</div></div>'
-      );
-      akiyaLayer.addLayer(marker);
+      L.marker([r.gps.lat,r.gps.lng],{icon:icon}).bindPopup(
+        '<div style="font-size:12px;min-width:170px;font-family:sans-serif">'+
+        '<div style="font-weight:700;margin-bottom:5px;line-height:1.4">'+(r.address||'住所不明')+'</div>'+
+        '<div style="margin-bottom:2px">スコア: <strong style="color:'+color+';font-size:14px">'+score+'</strong></div>'+
+        '<div style="margin-bottom:2px">判定: '+(r.judge||'-')+'</div>'+
+        '<div>状態: '+(r.cond||'-')+'</div></div>'
+      ).addTo(akiyaLayer);
     });
-  } catch(e) { console.error('Supabase error:', e); }
+  } catch(e) { console.error('Supabase:', e); }
 }
 loadAkiyaPins();
 </script>
