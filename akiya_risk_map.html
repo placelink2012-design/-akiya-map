@@ -33,6 +33,14 @@
   空き家リスクマップ
 </div>
 
+<!-- ズームインジケーター -->
+<div style="position:fixed;bottom:20px;right:10px;z-index:1100;
+     background:rgba(255,255,255,0.93);padding:6px 12px;border-radius:6px;
+     border:1px solid #aaa;font-family:sans-serif;font-size:12px;
+     pointer-events:none">
+  ズーム: <span id="zoom-value" style="font-weight:bold">14</span>
+</div>
+
 <!-- 右上コントロールパネル -->
 <div class="panel" style="top:10px;right:10px;padding:10px 12px;width:200px;max-height:90vh;overflow-y:auto">
   <div class="ph">レイヤー制御</div>
@@ -66,6 +74,11 @@
   <div style="font-size:10px;color:#888;margin:2px 0 8px 4px">※ズーム16以上で表示</div>
 
   <div class="sl">その他</div>
+  <label class="cl">
+    <input type="checkbox" id="chk-mixed" checked
+           onchange="toggleLayer(mixedGridLayer, this.checked)"> 混在リスクグリッド
+  </label>
+  <div id="status-mixed" style="font-size:10px;color:#888;margin:0 0 4px 18px"></div>
   <label class="cl" style="margin-bottom:8px">
     <input type="checkbox" id="chk-akiya" checked
            onchange="toggleLayer(akiyaLayer, this.checked)"> 空き家マップ ピン
@@ -80,6 +93,7 @@
   <span style="display:inline-block;width:14px;height:14px;background:#E24B4A;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 広（100㎡以上）リスク高<br>
   <span style="display:inline-block;width:14px;height:14px;background:#EF9F27;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 中（60〜100㎡）リスク中<br>
   <span style="display:inline-block;width:14px;height:14px;background:#1D9E75;vertical-align:middle;border-radius:2px;margin-right:4px"></span>建物 小（60㎡未満）リスク低<br>
+  <span style="display:inline-block;width:14px;height:14px;background:rgba(155,48,255,0.45);vertical-align:middle;border-radius:2px;margin-right:4px;border:1px solid #9B30FF"></span>混在（広＋小 100mグリッド）<br>
   <hr style="margin:4px 0">
   <small style="color:#666">建物ポリゴン: OpenStreetMap</small>
 </div>
@@ -88,7 +102,8 @@
 // ── マップ初期化 ─────────────────────────────────────────────
 var map = L.map('map', {center: [26.155, 127.675], zoom: 14});
 window.addEventListener('load', function() { map.invalidateSize(); });
-map.on('zoomend', _applyVisibility);
+map.on('zoom', _updateZoomIndicator);
+map.on('zoomend', function() { _applyVisibility(); _updateZoomIndicator(); });
 
 // ── ベースマップ ─────────────────────────────────────────────
 var aerialLayer = L.tileLayer(
@@ -244,10 +259,13 @@ function _renderMuniBuildings(key, data) {
     } else {
       cat = 'low';  color = '#1D9E75'; catLabel = '小（60㎡未満）';  cL++;
     }
+    var cLat = 0, cLng = 0;
+    coords.forEach(function(c) { cLat += c[0]; cLng += c[1]; });
+    cLat /= coords.length; cLng /= coords.length;
     var poly = L.polygon(coords, {
       color: '#fff', weight: 0.5, fillColor: color, fillOpacity: 0.65
     }).bindTooltip(Math.round(area) + '㎡ — ' + catLabel, { sticky: true });
-    m.polygons.push({ poly: poly, cat: cat });
+    m.polygons.push({ poly: poly, cat: cat, lat: cLat, lng: cLng });
     count++;
   });
 
@@ -257,13 +275,14 @@ function _renderMuniBuildings(key, data) {
 
   var cb = document.getElementById('chk-' + key);
   if (cb && cb.checked) _applyVisibility();
+  _updateMixedGrid();
 
   _setMuniStatus(key, '#1a7a4a', count.toLocaleString() + '棟');
   console.log(m.label + ': 計' + count + '棟 (赤' + cH + '/橙' + cM + '/緑' + cL + '), スキップ' + skipped);
 }
 
 function _applyVisibility() {
-  var zoom = map.getZoom();
+  var zoom = Math.round(map.getZoom()); // 小数zoom対策
   var riskHighOnly = document.getElementById('chk-risk-high').checked;
   Object.keys(MUNIS).forEach(function(key) {
     var m = MUNIS[key];
@@ -288,6 +307,55 @@ function _applyVisibility() {
 }
 
 
+
+// ── 混在リスクグリッド ──────────────────────────────────────
+var GRID_LAT = 100 / 111000;
+var GRID_LNG = 100 / (111000 * Math.cos(26.15 * Math.PI / 180));
+var GRID_ORIGIN_LAT = 26.05;
+var GRID_ORIGIN_LNG = 127.62;
+var mixedGridLayer = L.layerGroup().addTo(map);
+
+function _updateMixedGrid() {
+  var cells = {};
+  Object.keys(MUNIS).forEach(function(key) {
+    var m = MUNIS[key];
+    if (!m.loaded) return;
+    m.polygons.forEach(function(item) {
+      var r = Math.floor((item.lat - GRID_ORIGIN_LAT) / GRID_LAT);
+      var c = Math.floor((item.lng - GRID_ORIGIN_LNG) / GRID_LNG);
+      var k = r + '_' + c;
+      if (!cells[k]) cells[k] = {hasHigh: false, hasLow: false, r: r, c: c};
+      if (item.cat === 'high') cells[k].hasHigh = true;
+      if (item.cat === 'low')  cells[k].hasLow  = true;
+    });
+  });
+  mixedGridLayer.clearLayers();
+  var mixCount = 0;
+  Object.keys(cells).forEach(function(k) {
+    var cell = cells[k];
+    if (!cell.hasHigh || !cell.hasLow) return;
+    var lat1 = GRID_ORIGIN_LAT + cell.r * GRID_LAT;
+    var lng1 = GRID_ORIGIN_LNG + cell.c * GRID_LNG;
+    L.rectangle([[lat1, lng1], [lat1 + GRID_LAT, lng1 + GRID_LNG]], {
+      color: '#9B30FF', weight: 1, fillColor: '#9B30FF', fillOpacity: 0.35
+    }).bindTooltip('混在エリア（広＋小）', {sticky: true})
+      .addTo(mixedGridLayer);
+    mixCount++;
+  });
+  var statusEl = document.getElementById('status-mixed');
+  if (statusEl) {
+    statusEl.style.color = mixCount > 0 ? '#6600cc' : '#888';
+    statusEl.textContent = mixCount > 0 ? mixCount + 'グリッド検出' : '検出なし';
+  }
+  console.log('混在グリッド: ' + mixCount + 'セル');
+}
+
+// ── ズームインジケーター ──────────────────────────────────────
+function _updateZoomIndicator() {
+  var el = document.getElementById('zoom-value');
+  if (el) el.textContent = map.getZoom();
+}
+window.addEventListener('load', _updateZoomIndicator);
 
 // ── 操作関数 ────────────────────────────────────────────────
 function toggleLayer(layer, show) {
