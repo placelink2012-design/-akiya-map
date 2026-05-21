@@ -111,10 +111,7 @@ var _overpassQuery = [
   'out skel qt;'
 ].join('\n');
 
-var _overpassEndpoints = [
-  'https://overpass.openstreetmap.ru/api/interpreter',
-  'https://overpass.openstreetmap.fr/api/interpreter'
-];
+var _overpassEndpoint = 'https://overpass-api.de/api/interpreter';
 
 function loadBuildings() {
   var statusEl = document.getElementById('building-status');
@@ -122,19 +119,10 @@ function loadBuildings() {
     statusEl.style.color = '#888';
     statusEl.textContent = '読み込み中...';
   }
-  _tryOverpassXHR(0);
-}
 
-function _tryOverpassXHR(idx) {
-  if (idx >= _overpassEndpoints.length) {
-    _showBuildingError('全サーバーへの接続に失敗しました');
-    return;
-  }
-
-  var url = _overpassEndpoints[idx];
+  var url = _overpassEndpoint + '?data=' + encodeURIComponent(_overpassQuery);
   var xhr = new XMLHttpRequest();
-  xhr.open('POST', url, true);
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  xhr.open('GET', url, true);
   xhr.timeout = 100000; // 100秒
 
   xhr.onreadystatechange = function() {
@@ -155,29 +143,24 @@ function _tryOverpassXHR(idx) {
       }
       _renderBuildings(data);
 
-    } else if (xhr.status === 0) {
-      // CORS拒否 or ネットワーク到達不能 → 次のエンドポイントへ
-      console.warn('XHR status 0 (CORS/network) for: ' + url);
-      _tryOverpassXHR(idx + 1);
-
     } else {
       var errText = xhr.responseText.replace(/<[^>]+>/g, '').trim().substring(0, 100);
-      console.warn('XHR HTTP ' + xhr.status + ' for: ' + url + ' — ' + errText);
-      _tryOverpassXHR(idx + 1);
+      _showBuildingError('HTTP ' + xhr.status + (errText ? ' — ' + errText : ''));
+      console.error('Overpass XHR error', xhr.status, errText);
     }
   };
 
   xhr.ontimeout = function() {
-    console.warn('XHR timeout for: ' + url);
-    _tryOverpassXHR(idx + 1);
+    _showBuildingError('タイムアウト（100秒）');
+    console.error('Overpass XHR timeout');
   };
 
   xhr.onerror = function() {
-    console.warn('XHR network error for: ' + url);
-    _tryOverpassXHR(idx + 1);
+    _showBuildingError('ネットワークエラー（CORS等）');
+    console.error('Overpass XHR network error');
   };
 
-  xhr.send('data=' + encodeURIComponent(_overpassQuery));
+  xhr.send();
 }
 
 function _renderBuildings(data) {
