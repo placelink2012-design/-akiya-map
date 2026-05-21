@@ -47,12 +47,21 @@
            onchange="switchBasemap(this.value)"> 標準地図
   </label>
 
-  <div class="sl">オーバーレイ</div>
-  <label class="cl">
-    <input type="checkbox" id="chk-building" checked
-           onchange="toggleLayer(buildingLayer, this.checked)"> 建物ポリゴン（OSM）
-  </label>
-  <div id="building-status" style="font-size:10px;color:#888;margin-left:4px;margin-bottom:4px">読み込み中...</div>
+  <div class="sl">市町村別建物（OSM）</div>
+  <label class="cl"><input type="checkbox" id="chk-tomigusuku" onchange="toggleMuni('tomigusuku',this.checked)"> 豊見城市</label>
+  <div id="status-tomigusuku" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-naha" onchange="toggleMuni('naha',this.checked)"> 那覇市</label>
+  <div id="status-naha" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-itoman" onchange="toggleMuni('itoman',this.checked)"> 糸満市</label>
+  <div id="status-itoman" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-nanjo" onchange="toggleMuni('nanjo',this.checked)"> 南城市</label>
+  <div id="status-nanjo" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-yaese" onchange="toggleMuni('yaese',this.checked)"> 八重瀬町</label>
+  <div id="status-yaese" style="font-size:10px;color:#888;margin:0 0 3px 18px"></div>
+  <label class="cl"><input type="checkbox" id="chk-haebaru" onchange="toggleMuni('haebaru',this.checked)"> 南風原町</label>
+  <div id="status-haebaru" style="font-size:10px;color:#888;margin:0 0 8px 18px"></div>
+
+  <div class="sl">その他</div>
   <label class="cl" style="margin-bottom:8px">
     <input type="checkbox" id="chk-akiya" checked
            onchange="toggleLayer(akiyaLayer, this.checked)"> 空き家マップ ピン
@@ -87,8 +96,17 @@ var streetLayer = L.tileLayer(
   {attribution: 'CartoDB', subdomains: 'abcd', maxZoom: 20}
 );
 
-// ── 建物ポリゴン (OSM Overpass API) ─────────────────────────
-var buildingLayer = L.layerGroup().addTo(map);
+// ── 市町村別建物ポリゴン (OSM Overpass API) ─────────────────
+var MUNIS = {
+  tomigusuku: { label:'豊見城市', bbox:'26.09,127.62,26.22,127.74', layer:null, loaded:false, loading:false },
+  naha:       { label:'那覇市',   bbox:'26.19,127.65,26.27,127.73', layer:null, loaded:false, loading:false },
+  itoman:     { label:'糸満市',   bbox:'26.06,127.61,26.17,127.73', layer:null, loaded:false, loading:false },
+  nanjo:      { label:'南城市',   bbox:'26.11,127.71,26.24,127.87', layer:null, loaded:false, loading:false },
+  yaese:      { label:'八重瀬町', bbox:'26.09,127.69,26.18,127.79', layer:null, loaded:false, loading:false },
+  haebaru:    { label:'南風原町', bbox:'26.16,127.70,26.22,127.78', layer:null, loaded:false, loading:false }
+};
+
+var _overpassEndpoint = 'https://overpass-api.de/api/interpreter';
 
 function calcAreaM2(latLngs) {
   var LAT_M = 111000;
@@ -103,116 +121,131 @@ function calcAreaM2(latLngs) {
   return Math.abs(area) / 2;
 }
 
-var _overpassQuery = [
-  '[out:json][timeout:90];',
-  'way["building"](26.09,127.63,26.22,127.74);',
-  'out body;',
-  '>;',
-  'out skel qt;'
-].join('\n');
+function _setMuniStatus(key, color, html) {
+  var el = document.getElementById('status-' + key);
+  if (!el) return;
+  el.style.color = color;
+  el.innerHTML = html;
+}
 
-var _overpassEndpoint = 'https://overpass-api.de/api/interpreter';
+function _retryBtn(key) {
+  return ' <button onclick="retryMuni(\'' + key + '\')" ' +
+    'style="font-size:10px;cursor:pointer;padding:1px 4px;border:1px solid #c00;' +
+    'border-radius:3px;background:white;color:#c00">再試行</button>';
+}
 
-function loadBuildings() {
-  var statusEl = document.getElementById('building-status');
-  if (statusEl) {
-    statusEl.style.color = '#888';
-    statusEl.textContent = '読み込み中...';
+function toggleMuni(key, show) {
+  var m = MUNIS[key];
+  if (!m) return;
+  if (show) {
+    if (m.loaded) {
+      map.addLayer(m.layer);
+    } else if (!m.loading) {
+      _loadMuniBuildings(key);
+    }
+  } else {
+    if (m.layer) map.removeLayer(m.layer);
   }
+}
 
-  var url = _overpassEndpoint + '?data=' + encodeURIComponent(_overpassQuery);
+function retryMuni(key) {
+  var cb = document.getElementById('chk-' + key);
+  if (cb && cb.checked) {
+    MUNIS[key].loading = false;
+    _loadMuniBuildings(key);
+  }
+}
+
+function _loadMuniBuildings(key) {
+  var m = MUNIS[key];
+  m.loading = true;
+  _setMuniStatus(key, '#888', '読み込み中...');
+
+  var query = [
+    '[out:json][timeout:90];',
+    'way["building"](' + m.bbox + ');',
+    'out body;',
+    '>;',
+    'out skel qt;'
+  ].join('\n');
+
   var xhr = new XMLHttpRequest();
-  xhr.open('GET', url, true);
-  xhr.timeout = 100000; // 100秒
+  xhr.open('GET', _overpassEndpoint + '?data=' + encodeURIComponent(query), true);
+  xhr.timeout = 100000;
 
   xhr.onreadystatechange = function() {
     if (xhr.readyState !== 4) return;
-
     if (xhr.status >= 200 && xhr.status < 300) {
       var data;
-      try {
-        data = JSON.parse(xhr.responseText);
-      } catch(e) {
-        _showBuildingError('JSONパースエラー: ' + e.message.substring(0, 60));
-        console.error('Overpass parse error:', e, xhr.responseText.substring(0, 200));
+      try { data = JSON.parse(xhr.responseText); }
+      catch(e) {
+        m.loading = false;
+        _setMuniStatus(key, '#c00', 'パースエラー' + _retryBtn(key));
+        console.error(m.label + ' parse error:', e);
         return;
       }
       if (!data.elements) {
-        _showBuildingError('レスポンスに elements がありません');
+        m.loading = false;
+        _setMuniStatus(key, '#c00', 'データなし' + _retryBtn(key));
         return;
       }
-      _renderBuildings(data);
-
+      _renderMuniBuildings(key, data);
     } else {
-      var errText = xhr.responseText.replace(/<[^>]+>/g, '').trim().substring(0, 100);
-      _showBuildingError('HTTP ' + xhr.status + (errText ? ' — ' + errText : ''));
-      console.error('Overpass XHR error', xhr.status, errText);
+      m.loading = false;
+      _setMuniStatus(key, '#c00', 'HTTP ' + xhr.status + _retryBtn(key));
+      console.error(m.label + ' XHR error:', xhr.status);
     }
   };
 
   xhr.ontimeout = function() {
-    _showBuildingError('タイムアウト（100秒）');
-    console.error('Overpass XHR timeout');
+    m.loading = false;
+    _setMuniStatus(key, '#c00', 'タイムアウト' + _retryBtn(key));
+    console.error(m.label + ' timeout');
   };
 
   xhr.onerror = function() {
-    _showBuildingError('ネットワークエラー（CORS等）');
-    console.error('Overpass XHR network error');
+    m.loading = false;
+    _setMuniStatus(key, '#c00', 'ネットワークエラー' + _retryBtn(key));
+    console.error(m.label + ' network error');
   };
 
   xhr.send();
 }
 
-function _renderBuildings(data) {
+function _renderMuniBuildings(key, data) {
+  var m = MUNIS[key];
   var nodes = {};
   data.elements.forEach(function(el) {
     if (el.type === 'node') nodes[el.id] = [el.lat, el.lon];
   });
 
-  buildingLayer.clearLayers();
-  var count = 0;
-  var skipped = 0;
+  m.layer = L.layerGroup();
+  var count = 0, skipped = 0;
 
   data.elements.forEach(function(el) {
     if (el.type !== 'way' || !el.nodes || el.nodes.length < 4) return;
     var coords = el.nodes.slice(0, -1).map(function(id) { return nodes[id]; }).filter(Boolean);
     if (coords.length < 3) { skipped++; return; }
-
     var area = calcAreaM2(coords);
     if (area <= 0 || area > 100000) { skipped++; return; }
-
     var color = area >= 100 ? '#E24B4A' : area >= 60 ? '#EF9F27' : '#1D9E75';
     var cat   = area >= 100 ? '広（100㎡以上）' : area >= 60 ? '中（60〜100㎡）' : '小（60㎡未満）';
     L.polygon(coords, {
-      color: '#fff', weight: 0.5,
-      fillColor: color, fillOpacity: 0.65
+      color: '#fff', weight: 0.5, fillColor: color, fillOpacity: 0.65
     }).bindTooltip(Math.round(area) + '㎡ — ' + cat, { sticky: true })
-      .addTo(buildingLayer);
+      .addTo(m.layer);
     count++;
   });
 
-  var statusEl = document.getElementById('building-status');
-  if (statusEl) {
-    statusEl.style.color = '#1a7a4a';
-    statusEl.textContent = count.toLocaleString() + '棟表示中';
-  }
-  console.log('建物ポリゴン: ' + count + '棟描画, ' + skipped + '棟スキップ');
-}
+  m.loaded = true;
+  m.loading = false;
 
-function _showBuildingError(msg) {
-  var statusEl = document.getElementById('building-status');
-  if (statusEl) {
-    statusEl.style.color = '#c00';
-    statusEl.innerHTML =
-      'エラー: ' + msg.substring(0, 80) +
-      ' &nbsp;<button onclick="loadBuildings()" ' +
-      'style="font-size:10px;cursor:pointer;padding:1px 6px;border:1px solid #c00;' +
-      'border-radius:3px;background:white;color:#c00">再試行</button>';
-  }
-  console.error('Overpass API エラー:', msg);
-}
+  var cb = document.getElementById('chk-' + key);
+  if (cb && cb.checked) map.addLayer(m.layer);
 
-loadBuildings();
+  _setMuniStatus(key, '#1a7a4a', count.toLocaleString() + '棟');
+  console.log(m.label + ': ' + count + '棟, ' + skipped + 'スキップ');
+}
 
 
 
