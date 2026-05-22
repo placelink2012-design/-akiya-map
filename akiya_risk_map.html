@@ -123,7 +123,12 @@ function switchBasemap(val) {
 }
 
 // ── 建物ポリゴン（OSM Overpass API） ─────────────────────────
-var OVERPASS_URL    = 'https://overpass-api.de/api/interpreter';
+// 複数エンドポイントを順番に試し、最初に成功したものを使う
+var OVERPASS_ENDPOINTS = [
+  'https://lz4.overpass-api.de/api/interpreter',
+  'https://overpass.osm.rambler.ru/cgi/interpreter',
+  'https://overpass-api.de/api/interpreter'
+];
 var GSI_DETAIL_ZOOM = 16;
 var MIXED_MIN_COUNT = 5;
 
@@ -154,6 +159,25 @@ function _clearDetailCache() {
   _updateGsiStatus();
 }
 
+// エンドポイントを順番に試す（失敗したら次へ）
+function _fetchOverpass(query, idx) {
+  if (idx >= OVERPASS_ENDPOINTS.length) return Promise.reject(new Error('all endpoints failed'));
+  var url = OVERPASS_ENDPOINTS[idx];
+  console.log('[OSM] try endpoint[' + idx + ']', url);
+  return fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'data=' + encodeURIComponent(query)
+  }).then(function(r) {
+    console.log('[OSM] status', r.status, url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).catch(function(e) {
+    console.warn('[OSM] endpoint failed:', url, e.message);
+    return _fetchOverpass(query, idx + 1);
+  });
+}
+
 // 可視範囲の building=* を Overpass から取得（500ms デバウンス）
 function _loadDetailTiles() {
   clearTimeout(_bldgTimer);
@@ -162,26 +186,16 @@ function _loadDetailTiles() {
     var b = map.getBounds();
     var s = b.getSouth().toFixed(5), w = b.getWest().toFixed(5);
     var n = b.getNorth().toFixed(5), e = b.getEast().toFixed(5);
-    // "out geom" はスペース区切り。encodeURIComponent でスペースは %20 になるので正常に解釈される
     var query = '[out:json][timeout:25];way["building"](' + s + ',' + w + ',' + n + ',' + e + ');out geom;';
     _loadingN++;
     _setGsiStatus('読み込み中...');
-    console.log('[OSM] query', s, w, n, e);
-    fetch(OVERPASS_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: 'data=' + encodeURIComponent(query)
-    })
-      .then(function(r) {
-        console.log('[OSM] status', r.status);
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
+    console.log('[OSM] query bounds', s, w, n, e);
+    _fetchOverpass(query, 0)
       .then(function(data) {
         try { _parseOverpass(data); }
         catch(e) { console.error('[OSM] parse error', e.message); }
       })
-      .catch(function(e) { console.error('[OSM] error', e.message); })
+      .catch(function(e) { console.error('[OSM] all endpoints failed:', e.message); })
       .finally(function() { _loadingN = Math.max(0, _loadingN - 1); _updateGsiStatus(); });
   }, 500);
 }
