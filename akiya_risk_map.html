@@ -362,8 +362,8 @@ function _parseTile(buf, tz, tx, ty) {
                 ' / SBldA:' + (foundSBldA ? '検出' : '未検出') +
                 ' — tile ' + KEY);
   } else {
-    console.warn('[GSI] ⚠ BldA/SBldA が tile ' + KEY + ' に見つかりません。' +
-                 '含まれるレイヤー: [' + layerNames.join(', ') + ']');
+    var rawNames = layerNames.map(function(n){ return n.replace(/\[\d+\]$/, ''); });
+    console.log('[GSI] ⚠ BldA/SBldA が tile ' + KEY + ' に見つかりません。含まれるレイヤー: ' + JSON.stringify(rawNames));
   }
 
   if (added > 0) {
