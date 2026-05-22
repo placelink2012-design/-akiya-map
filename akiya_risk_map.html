@@ -92,6 +92,7 @@
 <script>
 // ── マップ初期化 ────────────────────────────────────────────
 var map = L.map('map', {center: [26.155, 127.675], zoom: 14});
+console.log('[GSI] ▶ akiya_risk_map 初期化開始');
 window.addEventListener('load', function() {
   map.invalidateSize();
   _updateZoomIndicator();
@@ -126,6 +127,8 @@ function switchBasemap(val) {
 var GSI_URL          = 'https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/{z}/{x}/{y}.pbf';
 var GSI_DETAIL_ZOOM  = 16;  // このタイルズーム以上で面積色分け
 var MIXED_MIN_COUNT  = 5;   // 混在グリッドの最低建物棟数
+console.log('[GSI] 設定: URL='+GSI_URL);
+console.log('[GSI] 設定: DETAIL_ZOOM='+GSI_DETAIL_ZOOM+' (ズーム'+GSI_DETAIL_ZOOM+'以上で建物ポリゴン表示)');
 
 // 広域表示用 VectorGrid（ズーム <16、青単色）
 var _gsiOverviewVG = null;
@@ -139,6 +142,7 @@ var _canvasR        = L.canvas({padding: 0.5});
 
 function _initOverviewVG() {
   if (_gsiOverviewVG) return;
+  console.log('[GSI] VectorGrid 広域表示を初期化 (ズーム<'+GSI_DETAIL_ZOOM+' 用)');
   var bld = {fill:true, fillColor:'#4A90D9', fillOpacity:0.6, color:'#fff', weight:0.5, opacity:1};
   var hid = {fill:false, stroke:false, weight:0, fillOpacity:0, opacity:0};
   var map_ = {BldA: bld, SBldA: bld};
@@ -349,6 +353,18 @@ function _parseTile(buf, tz, tx, ty) {
   });
 
   console.log('[GSI] tile', KEY, 'layers=['+layerNames.join(',')+'] added='+added, 'total='+_gsiPolygons.length);
+
+  // BldA / SBldA 検出結果を明示
+  var foundBldA  = layerNames.some(function(n){ return /^BldA/.test(n); });
+  var foundSBldA = layerNames.some(function(n){ return /^SBldA/.test(n); });
+  if (foundBldA || foundSBldA) {
+    console.log('[GSI] ✓ BldA:' + (foundBldA ? '検出' : '未検出') +
+                ' / SBldA:' + (foundSBldA ? '検出' : '未検出') +
+                ' — tile ' + KEY);
+  } else {
+    console.warn('[GSI] ⚠ BldA/SBldA が tile ' + KEY + ' に見つかりません。' +
+                 '含まれるレイヤー: [' + layerNames.join(', ') + ']');
+  }
 
   if (added > 0) {
     _updateGsiStatus();
