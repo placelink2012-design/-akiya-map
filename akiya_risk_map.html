@@ -135,9 +135,8 @@ var MIXED_MIN_COUNT = 5;
 console.log('[OSM] 初期設定 endpoints='+OVERPASS_ENDPOINTS.length+' GSI_DETAIL_ZOOM='+GSI_DETAIL_ZOOM);
 
 var _gsiDetailLayer = L.layerGroup();
-var _gsiPolygons    = [];
-var _bldgDoneIds    = {};
-var _loadingN       = 0;
+var _gsiPolygons    = [];   // 各エントリは {poly, cat, lat, lng, osmId}
+var _fetchGen       = 0;    // キャッシュクリアごとにインクリメント、古いフェッチを破棄
 var _bldgTimer      = null;
 var _canvasR        = L.canvas({padding: 0.5});
 
@@ -154,11 +153,11 @@ function _ringArea(ring) {
 }
 
 function _clearDetailCache() {
-  _bldgDoneIds = {};
+  _fetchGen++;              // 進行中のフェッチを無効化
   _gsiPolygons = [];
   _gsiDetailLayer.clearLayers();
-  _loadingN = 0;
-  _updateGsiStatus();
+  _setGsiStatus('');
+  console.log('[OSM] キャッシュクリア gen='+_fetchGen);
 }
 
 // エンドポイントを順番に試す（失敗したら次へ）
@@ -184,22 +183,24 @@ function _fetchOverpass(query, idx) {
 function _loadDetailTiles() {
   clearTimeout(_bldgTimer);
   _bldgTimer = setTimeout(function() {
-    if (_loadingN > 0) return;
+    var gen = _fetchGen;   // このフェッチの世代を記録
     var b = map.getBounds();
     var s = b.getSouth().toFixed(5), w = b.getWest().toFixed(5);
     var n = b.getNorth().toFixed(5), e = b.getEast().toFixed(5);
     var query = '[out:json][timeout:25];way["building"](' + s + ',' + w + ',' + n + ',' + e + ');out geom;';
-    _loadingN++;
     _setGsiStatus('読み込み中...');
-    console.log('[OSM] _loadDetailTiles: zoom='+map.getZoom().toFixed(1)+' bounds S='+s+' W='+w+' N='+n+' E='+e);
-    console.log('[OSM] query:', query);
+    console.log('[OSM] fetch start gen='+gen+' zoom='+map.getZoom().toFixed(1)+' S='+s+' W='+w+' N='+n+' E='+e);
     _fetchOverpass(query, 0)
       .then(function(data) {
+        if (_fetchGen !== gen) {
+          console.log('[OSM] 古いフェッチを破棄 (gen '+gen+' → 現在'+_fetchGen+')');
+          return;
+        }
         try { _parseOverpass(data); }
         catch(e) { console.error('[OSM] parse error', e.message); }
       })
       .catch(function(e) { console.error('[OSM] all endpoints failed:', e.message); })
-      .finally(function() { _loadingN = Math.max(0, _loadingN - 1); _updateGsiStatus(); });
+      .finally(function() { if (_fetchGen === gen) _updateGsiStatus(); });
   }, 500);
 }
 
@@ -219,13 +220,17 @@ function _parseOverpass(data) {
       +' first='+(s0.geometry && s0.geometry[0] ? JSON.stringify(s0.geometry[0]) : '-'));
   }
 
+  // _bldgDoneIds は廃止。_gsiPolygons の osmId から重複チェックを導出。
+  // これにより _gsiPolygons クリア後に古いIDが残る競合状態を防ぐ。
+  var existingIds = {};
+  _gsiPolygons.forEach(function(p) { existingIds[p.osmId] = true; });
+
   var added = 0, dup = 0, skipNotWay = 0, skipNoGeom = 0, skipArea = 0;
 
   data.elements.forEach(function(el) {
     if (el.type !== 'way') { skipNotWay++; return; }
     if (!el.geometry || el.geometry.length < 3) { skipNoGeom++; return; }
-    if (_bldgDoneIds[el.id]) { dup++; return; }
-    _bldgDoneIds[el.id] = true;
+    if (existingIds[el.id]) { dup++; return; }
 
     var ring = el.geometry.map(function(p) { return [p.lon, p.lat]; });
     var area = _ringArea(ring);
@@ -246,7 +251,8 @@ function _parseOverpass(data) {
       renderer: _canvasR
     }).bindTooltip(Math.round(area) + '㎡ — ' + label, {sticky: true});
 
-    _gsiPolygons.push({poly: poly, cat: cat, lat: cLat, lng: cLng});
+    _gsiPolygons.push({poly: poly, cat: cat, lat: cLat, lng: cLng, osmId: el.id});
+    existingIds[el.id] = true;   // 同一フェッチ内での二重追加も防ぐ
     added++;
   });
 
