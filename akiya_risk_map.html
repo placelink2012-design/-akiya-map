@@ -210,20 +210,26 @@ function _parseOverpass(data) {
     return;
   }
   console.log('[OSM] _parseOverpass: elements.length='+data.elements.length+' version='+data.version);
-  var riskHighOnly = document.getElementById('chk-risk-high').checked;
-  var showing = document.getElementById('chk-gsi-bldg').checked &&
-                Math.round(map.getZoom()) >= GSI_DETAIL_ZOOM &&
-                map.hasLayer(_gsiDetailLayer);
-  var added = 0, skipped = 0, dup = 0;
+
+  // 最初の要素をサンプルログ（フォーマット確認用）
+  if (data.elements.length > 0) {
+    var s0 = data.elements[0];
+    console.log('[OSM] sample[0] type='+s0.type+' id='+s0.id
+      +' geom='+(s0.geometry ? s0.geometry.length+'pts' : 'undefined')
+      +' first='+(s0.geometry && s0.geometry[0] ? JSON.stringify(s0.geometry[0]) : '-'));
+  }
+
+  var added = 0, dup = 0, skipNotWay = 0, skipNoGeom = 0, skipArea = 0;
 
   data.elements.forEach(function(el) {
-    if (el.type !== 'way' || !el.geometry || el.geometry.length < 3) { skipped++; return; }
+    if (el.type !== 'way') { skipNotWay++; return; }
+    if (!el.geometry || el.geometry.length < 3) { skipNoGeom++; return; }
     if (_bldgDoneIds[el.id]) { dup++; return; }
     _bldgDoneIds[el.id] = true;
 
     var ring = el.geometry.map(function(p) { return [p.lon, p.lat]; });
     var area = _ringArea(ring);
-    if (area <= 0 || area > 100000) { skipped++; return; }
+    if (area <= 0 || area > 100000) { skipArea++; return; }
 
     var cat, color, label;
     if (area >= 100)     { cat='high'; color='#E24B4A'; label='広（100㎡以上）'; }
@@ -241,15 +247,26 @@ function _parseOverpass(data) {
     }).bindTooltip(Math.round(area) + '㎡ — ' + label, {sticky: true});
 
     _gsiPolygons.push({poly: poly, cat: cat, lat: cLat, lng: cLng});
-    if (showing && (cat === 'high' || !riskHighOnly)) poly.addTo(_gsiDetailLayer);
     added++;
   });
 
-  console.log('[OSM] added='+added+' dup='+dup+' skipped='+skipped+' total='+_gsiPolygons.length);
-  if (added === 0 && data.elements.length > 0) {
-    console.warn('[OSM] !! Overpassから'+data.elements.length+'件取得したが追加0 — way/geom/area条件を確認');
+  console.log('[OSM] added='+added+' dup='+dup
+    +' skipNotWay='+skipNotWay+' skipNoGeom='+skipNoGeom+' skipArea='+skipArea
+    +' total_polys='+_gsiPolygons.length);
+
+  // dup のみの場合はキャッシュ済みなので警告不要
+  if (added === 0 && (skipNotWay + skipNoGeom + skipArea) > 0) {
+    console.warn('[OSM] !! 全件スキップ — skipNotWay='+skipNotWay
+      +' skipNoGeom='+skipNoGeom+' skipArea='+skipArea);
   }
-  if (added > 0) { _updateGsiStatus(); _updateMixedGrid(); }
+
+  if (added > 0) {
+    // showing変数のタイミング問題を回避: 常に _rebuildDetailLayer で再描画
+    // （非同期フェッチ中のズーム/チェック変化にも対応）
+    _rebuildDetailLayer();
+    _updateGsiStatus();
+    _updateMixedGrid();
+  }
 }
 
 function _setGsiStatus(text, color) {
