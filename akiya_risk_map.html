@@ -122,21 +122,21 @@ function switchBasemap(val) {
   else { map.removeLayer(aerialLayer); map.addLayer(streetLayer); }
 }
 
-// ── 地理院建物ポリゴン ─────────────────────────────────────
-var GSI_URL         = 'https://cyberjapandata.gsi.go.jp/xyz/experimental_bldg/{z}/{x}/{y}.geojson';
+// ── 建物ポリゴン（OpenStreetMap Overpass API） ───────────────
+// GSIタイルは沖縄で404のためOSM Overpassを使用（全国対応）
+var OVERPASS_URL    = 'https://overpass-api.de/api/interpreter';
 var GSI_DETAIL_ZOOM = 16;  // このズーム以上で建物ポリゴン表示
-var GSI_TILE_ZOOM   = 18;  // GeoJSONタイル取得ズーム（experimental_bldgは18が有効）
 var MIXED_MIN_COUNT = 5;   // 混在グリッドの最低建物棟数
-console.log('[GSI] URL='+GSI_URL);
 
-// 詳細表示用（ズーム >=16、面積色分け）
+// 表示用変数
 var _gsiDetailLayer = L.layerGroup();
 var _gsiPolygons    = [];   // {poly, cat, lat, lng}
-var _tileDone       = {};   // 取得済みタイルキー
+var _bldgDoneIds    = {};   // 取得済み OSM way ID（重複防止）
 var _loadingN       = 0;
+var _bldgTimer      = null;
 var _canvasR        = L.canvas({padding: 0.5});
 
-// GeoJSON外周リング面積（ショーレース、沖縄固定スケール）
+// 外周リング面積（ショーレース、沖縄固定スケール）
 // ring: [[lng, lat], ...] の配列
 function _ringArea(ring) {
   var LAT_M = 111000, LNG_M = 111000 * Math.cos(26.15 * Math.PI / 180);
@@ -149,106 +149,87 @@ function _ringArea(ring) {
   return Math.abs(a) / 2;
 }
 
-// 可視タイル座標一覧（タイルズーム tz）
-function _visibleTiles(tz) {
-  var b=map.getBounds(), n=Math.pow(2,tz);
-  function lng2x(v){ return Math.floor((v+180)/360*n); }
-  function lat2y(v){ var r=v*Math.PI/180; return Math.floor((1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n); }
-  var x0=lng2x(b.getWest()), x1=lng2x(b.getEast());
-  var y0=lat2y(b.getNorth()), y1=lat2y(b.getSouth());
-  var tiles=[];
-  for (var x=x0; x<=x1; x++) for (var y=y0; y<=y1; y++) tiles.push({z:tz,x:x,y:y});
-  return tiles;
-}
-
-// 詳細キャッシュをクリア
+// キャッシュをクリア
 function _clearDetailCache() {
-  _tileDone = {};
+  _bldgDoneIds = {};
   _gsiPolygons = [];
   _gsiDetailLayer.clearLayers();
   _loadingN = 0;
   _updateGsiStatus();
 }
 
-// 詳細タイルを非同期フェッチ＋パース（GeoJSON、GSI_TILE_ZOOM=18固定）
+// 可視範囲の建物を Overpass API から取得（400ms デバウンス）
 function _loadDetailTiles() {
-  var tiles = _visibleTiles(GSI_TILE_ZOOM);
-  console.log('[GSI] _loadDetailTiles zoom='+map.getZoom().toFixed(1)+' tileZoom='+GSI_TILE_ZOOM+' tiles='+tiles.length);
-  tiles.forEach(function(t) {
-    var key = t.z+'/'+t.x+'/'+t.y;
-    if (_tileDone[key]) { console.log('[GSI]   skip (cached)', key); return; }
-    _tileDone[key] = true;
+  clearTimeout(_bldgTimer);
+  _bldgTimer = setTimeout(function() {
+    if (_loadingN > 0) return;
+    var b = map.getBounds();
+    var s = b.getSouth().toFixed(5), w = b.getWest().toFixed(5);
+    var n = b.getNorth().toFixed(5), e = b.getEast().toFixed(5);
+    var query = '[out:json][timeout:25];way["building"](' + s + ',' + w + ',' + n + ',' + e + ');out+geom;';
     _loadingN++;
-    _setGsiStatus('読み込み中(' + _loadingN + ')...');
-
-    var url = GSI_URL.replace('{z}',t.z).replace('{x}',t.x).replace('{y}',t.y);
-    console.log('[GSI]   fetch', url);
-    fetch(url)
-      .then(function(r){
-        console.log('[GSI]   response', key, r.status);
-        if(!r.ok) throw new Error(r.status);
+    _setGsiStatus('読み込み中...');
+    console.log('[OSM] Overpass query bounds', s, w, n, e);
+    fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'data=' + encodeURIComponent(query)
+    })
+      .then(function(r) {
+        console.log('[OSM] response', r.status);
+        if (!r.ok) throw new Error(r.status);
         return r.json();
       })
-      .then(function(data){
-        if (!data) { console.warn('[GSI] null response', key); return; }
-        try { _parseTileGeoJSON(data, t.z, t.x, t.y); }
-        catch(e) { console.error('[GSI] parse error', key, e.message, e.stack); }
+      .then(function(data) {
+        try { _parseOverpass(data); }
+        catch(e) { console.error('[OSM] parse error', e.message, e.stack); }
       })
-      .catch(function(e){ console.error('[GSI] tile error', key, e.message); })
-      .finally(function(){ _loadingN=Math.max(0,_loadingN-1); _updateGsiStatus(); });
-  });
+      .catch(function(e) { console.error('[OSM] Overpass error', e.message); })
+      .finally(function() { _loadingN = Math.max(0, _loadingN - 1); _updateGsiStatus(); });
+  }, 400);
 }
 
-// GeoJSON FeatureCollection → ポリゴンを _gsiDetailLayer に追加
-function _parseTileGeoJSON(data, tz, tx, ty) {
-  var KEY = tz+'/'+tx+'/'+ty;
+// Overpass JSON → ポリゴンを _gsiDetailLayer に追加
+function _parseOverpass(data) {
+  if (!data || !data.elements) { console.log('[OSM] no elements'); return; }
   var riskHighOnly = document.getElementById('chk-risk-high').checked;
   var showing = document.getElementById('chk-gsi-bldg').checked &&
                 Math.round(map.getZoom()) >= GSI_DETAIL_ZOOM &&
                 map.hasLayer(_gsiDetailLayer);
-  var added = 0, skipped = 0;
+  var added = 0, skipped = 0, dup = 0;
 
-  if (!data || !data.features || !data.features.length) {
-    console.log('[GSI] tile', KEY, 'features=0');
-    return;
-  }
+  data.elements.forEach(function(el) {
+    if (el.type !== 'way' || !el.geometry || el.geometry.length < 3) { skipped++; return; }
+    if (_bldgDoneIds[el.id]) { dup++; return; }
+    _bldgDoneIds[el.id] = true;
 
-  data.features.forEach(function(feat) {
-    if (!feat.geometry) return;
-    var geomType = feat.geometry.type;
-    var polys = geomType === 'Polygon'      ? [feat.geometry.coordinates]
-              : geomType === 'MultiPolygon' ?  feat.geometry.coordinates
-              : null;
-    if (!polys) return;
+    // 面積計算: [[lng, lat]]
+    var ring = el.geometry.map(function(p) { return [p.lon, p.lat]; });
+    var area = _ringArea(ring);
+    if (area <= 0 || area > 100000) { skipped++; return; }
 
-    polys.forEach(function(rings) {
-      if (!rings || !rings[0] || rings[0].length < 3) { skipped++; return; }
-      var area = _ringArea(rings[0]);
-      if (area <= 0 || area > 100000) { skipped++; return; }
+    var cat, color, label;
+    if (area >= 100)     { cat='high'; color='#E24B4A'; label='広（100㎡以上）'; }
+    else if (area >= 60) { cat='mid';  color='#EF9F27'; label='中（60〜100㎡）'; }
+    else                 { cat='low';  color='#1D9E75'; label='小（60㎡未満）'; }
 
-      var cat, color, label;
-      if (area >= 100)     { cat='high'; color='#E24B4A'; label='広（100㎡以上）'; }
-      else if (area >= 60) { cat='mid';  color='#EF9F27'; label='中（60〜100㎡）'; }
-      else                 { cat='low';  color='#1D9E75'; label='小（60㎡未満）'; }
+    // Leaflet: [[lat, lng]]
+    var coords = el.geometry.map(function(p) { return [p.lat, p.lon]; });
+    var cLat = 0, cLng = 0;
+    coords.forEach(function(c) { cLat += c[0]; cLng += c[1]; });
+    cLat /= coords.length; cLng /= coords.length;
 
-      // GeoJSON座標は [lng, lat]、LeafletはI [lat, lng] に変換
-      var coords = rings[0].map(function(c){ return [c[1], c[0]]; });
-      var cLat=0, cLng=0;
-      coords.forEach(function(c){ cLat+=c[0]; cLng+=c[1]; });
-      cLat/=coords.length; cLng/=coords.length;
+    var poly = L.polygon(coords, {
+      color: '#fff', weight: 0.5, fillColor: color, fillOpacity: 0.65,
+      renderer: _canvasR
+    }).bindTooltip(Math.round(area) + '㎡ — ' + label, {sticky: true});
 
-      var poly = L.polygon(coords, {
-        color:'#fff', weight:0.5, fillColor:color, fillOpacity:0.65,
-        renderer: _canvasR
-      }).bindTooltip(Math.round(area)+'㎡ — '+label, {sticky:true});
-
-      _gsiPolygons.push({poly:poly, cat:cat, lat:cLat, lng:cLng});
-      if (showing && (cat==='high' || !riskHighOnly)) poly.addTo(_gsiDetailLayer);
-      added++;
-    });
+    _gsiPolygons.push({poly: poly, cat: cat, lat: cLat, lng: cLng});
+    if (showing && (cat === 'high' || !riskHighOnly)) poly.addTo(_gsiDetailLayer);
+    added++;
   });
 
-  console.log('[GSI] tile', KEY, 'features='+data.features.length+' added='+added+' skipped='+skipped+' total='+_gsiPolygons.length);
+  console.log('[OSM] elements='+data.elements.length+' added='+added+' skipped='+skipped+' dup='+dup+' total='+_gsiPolygons.length);
   if (added > 0) { _updateGsiStatus(); _updateMixedGrid(); }
 }
 
