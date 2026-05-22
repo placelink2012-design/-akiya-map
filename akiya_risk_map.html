@@ -282,8 +282,7 @@ function _setGsiStatus(text, color) {
   el.textContent = text;
 }
 function _updateGsiStatus() {
-  if (_loadingN > 0) _setGsiStatus('読み込み中('+_loadingN+')...', '#888');
-  else               _setGsiStatus(_gsiPolygons.length.toLocaleString()+'棟分析済', '#1a7a4a');
+  _setGsiStatus(_gsiPolygons.length.toLocaleString()+'棟分析済', '#1a7a4a');
 }
 
 // riskHighOnly チェック変更時
