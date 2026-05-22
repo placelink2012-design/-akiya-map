@@ -6,7 +6,6 @@
   <title>空き家リスクマップ</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/leaflet.vectorgrid@latest/dist/Leaflet.VectorGrid.bundled.js"></script>
   <style>
     html, body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; }
     #map { position:fixed; top:0; bottom:0; left:0; right:0; }
@@ -124,15 +123,11 @@ function switchBasemap(val) {
 }
 
 // ── 地理院建物ポリゴン ─────────────────────────────────────
-var GSI_URL          = 'https://cyberjapandata.gsi.go.jp/xyz/bvmap-v1/{z}/{x}/{y}.pbf';
-var GSI_DETAIL_ZOOM  = 16;  // このズーム以上で面積色分けポリゴンに切替
-var GSI_TILE_ZOOM    = 17;  // PBFタイル取得ズーム（固定）
-var MIXED_MIN_COUNT  = 5;   // 混在グリッドの最低建物棟数
-console.log('[GSI] 設定: URL='+GSI_URL);
-console.log('[GSI] 設定: DETAIL_ZOOM='+GSI_DETAIL_ZOOM+' (ズーム'+GSI_DETAIL_ZOOM+'以上で建物ポリゴン表示)');
-
-// 広域表示用 VectorGrid（ズーム <16、青単色）
-var _gsiOverviewVG = null;
+var GSI_URL         = 'https://cyberjapandata.gsi.go.jp/xyz/experimental_bldg/{z}/{x}/{y}.geojson';
+var GSI_DETAIL_ZOOM = 16;  // このズーム以上で建物ポリゴン表示
+var GSI_TILE_ZOOM   = 18;  // GeoJSONタイル取得ズーム（experimental_bldgは18が有効）
+var MIXED_MIN_COUNT = 5;   // 混在グリッドの最低建物棟数
+console.log('[GSI] URL='+GSI_URL);
 
 // 詳細表示用（ズーム >=16、面積色分け）
 var _gsiDetailLayer = L.layerGroup();
@@ -141,142 +136,17 @@ var _tileDone       = {};   // 取得済みタイルキー
 var _loadingN       = 0;
 var _canvasR        = L.canvas({padding: 0.5});
 
-function _initOverviewVG() {
-  if (_gsiOverviewVG) return;
-  console.log('[GSI] VectorGrid 広域表示を初期化 (ズーム<'+GSI_DETAIL_ZOOM+' 用)');
-  var bld = {fill:true, fillColor:'#4A90D9', fillOpacity:0.6, color:'#fff', weight:0.5, opacity:1};
-  var hid = {fill:false, stroke:false, weight:0, fillOpacity:0, opacity:0};
-  var map_ = {BldA: bld, SBldA: bld};
-  var styles = new Proxy(map_, {
-    get: function(o, n) {
-      if (typeof n !== 'string') return o[n];
-      return Object.prototype.hasOwnProperty.call(o, n) ? o[n] : hid;
-    }
-  });
-  _gsiOverviewVG = L.vectorGrid.protobuf(GSI_URL, {
-    minZoom:1, maxNativeZoom:GSI_DETAIL_ZOOM, maxZoom:22,
-    vectorTileLayerStyles: styles,
-    interactive: false,
-    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>'
-  });
-
-  // "Cannot read properties of null (reading 'data')" 対策:
-  // タイル取得Promiseに .catch を追加してnullレイヤーアクセスを防ぐ
-  if (typeof _gsiOverviewVG._getVectorTilePromise === 'function') {
-    var _origGVTP = _gsiOverviewVG._getVectorTilePromise.bind(_gsiOverviewVG);
-    _gsiOverviewVG._getVectorTilePromise = function(coords) {
-      return _origGVTP(coords).then(function(vt) {
-        if (!vt) return {layers: {}};
-        if (vt.layers && !Array.isArray(vt.layers)) {
-          for (var k in vt.layers) { if (!vt.layers[k]) delete vt.layers[k]; }
-        }
-        return vt;
-      }).catch(function(e) {
-        console.warn('[GSI] VectorGrid tile suppressed:', e.message);
-        return {layers: {}};
-      });
-    };
+// GeoJSON外周リング面積（ショーレース、沖縄固定スケール）
+// ring: [[lng, lat], ...] の配列
+function _ringArea(ring) {
+  var LAT_M = 111000, LNG_M = 111000 * Math.cos(26.15 * Math.PI / 180);
+  var a = 0, n = ring.length;
+  for (var i = 0; i < n; i++) {
+    var j = (i + 1) % n;
+    a += (ring[i][0] * LNG_M) * (ring[j][1] * LAT_M)
+       - (ring[j][0] * LNG_M) * (ring[i][1] * LAT_M);
   }
-}
-
-// ── インライン PBF デコーダー（外部ライブラリ不要） ────────────
-function _PBFReader(u8) { this.buf = u8; this.pos = 0; this.len = u8.length; }
-_PBFReader.prototype = {
-  readVarint: function() {
-    var b, val = 0, shift = 0;
-    do { b = this.buf[this.pos++]; val |= (b & 0x7f) << shift; shift += 7; } while (b & 0x80);
-    return val >>> 0;
-  },
-  readString: function() {
-    var n = this.readVarint(), end = this.pos + n, s = '';
-    while (this.pos < end) {
-      var c = this.buf[this.pos++];
-      if (c < 0x80) { s += String.fromCharCode(c); }
-      else if (c < 0xE0) { s += String.fromCharCode(((c & 0x1f) << 6) | (this.buf[this.pos++] & 0x3f)); }
-      else { s += String.fromCharCode(((c & 0x0f) << 12) | ((this.buf[this.pos++] & 0x3f) << 6) | (this.buf[this.pos++] & 0x3f)); }
-    }
-    return s;
-  },
-  readPackedVarint: function() {
-    var n = this.readVarint(), end = this.pos + n, arr = [];
-    while (this.pos < end) arr.push(this.readVarint());
-    return arr;
-  },
-  skip: function(type) {
-    if      (type === 0) { while (this.buf[this.pos++] & 0x80); }
-    else if (type === 2) { this.pos += this.readVarint(); }
-    else if (type === 5) { this.pos += 4; }
-    else if (type === 1) { this.pos += 8; }
-  },
-  readFields: function(fn, obj, end) {
-    end = (end === undefined) ? this.len : end;
-    while (this.pos < end) {
-      var key = this.readVarint(), tag = key >> 3, type = key & 7, start = this.pos;
-      fn(tag, obj, this);
-      if (this.pos === start) this.skip(type);
-    }
-    return obj;
-  },
-  readMessage: function(fn, obj) {
-    var n = this.readVarint();
-    return this.readFields(fn, obj, this.pos + n);
-  }
-};
-
-function _readLayerFields(tag, lyr, pbf) {
-  if      (tag === 1) lyr.name   = pbf.readString();
-  else if (tag === 2) lyr.feats.push(pbf.readMessage(_readFeatFields, {type:0, geom:[]}));
-  else if (tag === 5) lyr.extent = pbf.readVarint();
-}
-function _readFeatFields(tag, f, pbf) {
-  if      (tag === 3) f.type = pbf.readVarint();
-  else if (tag === 4) f.geom = pbf.readPackedVarint();
-}
-
-// MVT コマンド列 → リング配列 [{x,y}]
-function _decodeGeom(cmds) {
-  var rings=[], ring=[], x=0, y=0, i=0;
-  while (i < cmds.length) {
-    var cl=cmds[i++], cmd=cl&7, cnt=cl>>3;
-    if (cmd === 1) {
-      if (ring.length) { rings.push(ring); ring=[]; }
-      while (cnt--) {
-        x += (cmds[i]>>1)^-(cmds[i++]&1);
-        y += (cmds[i]>>1)^-(cmds[i++]&1);
-        ring.push({x:x, y:y});
-      }
-    } else if (cmd === 2) {
-      while (cnt--) {
-        x += (cmds[i]>>1)^-(cmds[i++]&1);
-        y += (cmds[i]>>1)^-(cmds[i++]&1);
-        ring.push({x:x, y:y});
-      }
-    } else if (cmd === 7) {
-      if (ring.length) { ring.push(ring[0]); rings.push(ring); ring=[]; }
-    }
-  }
-  if (ring.length) rings.push(ring);
-  return rings;
-}
-
-// タイルピクセル → LatLng
-function _px2ll(tx, ty, tz, px, py, ext) {
-  var n = Math.pow(2, tz);
-  var lng = (tx + px/ext)/n*360 - 180;
-  var lat = Math.atan(Math.sinh(Math.PI*(1 - 2*(ty+py/ext)/n)))*180/Math.PI;
-  return [lat, lng];
-}
-
-// 外周リング面積（ショーレース、沖縄固定スケール）
-function _ringArea(ring, tx, ty, tz, ext) {
-  var LAT_M=111000, LNG_M=111000*Math.cos(26.15*Math.PI/180);
-  var pts = ring.map(function(p){ return _px2ll(tx,ty,tz,p.x,p.y,ext); });
-  var a=0, n=pts.length;
-  for (var i=0; i<n; i++) {
-    var j=(i+1)%n;
-    a += (pts[i][1]*LNG_M)*(pts[j][0]*LAT_M) - (pts[j][1]*LNG_M)*(pts[i][0]*LAT_M);
-  }
-  return Math.abs(a)/2;
+  return Math.abs(a) / 2;
 }
 
 // 可視タイル座標一覧（タイルズーム tz）
@@ -300,7 +170,7 @@ function _clearDetailCache() {
   _updateGsiStatus();
 }
 
-// 詳細タイルを非同期フェッチ＋パース（GSI_TILE_ZOOM=17固定）
+// 詳細タイルを非同期フェッチ＋パース（GeoJSON、GSI_TILE_ZOOM=18固定）
 function _loadDetailTiles() {
   var tiles = _visibleTiles(GSI_TILE_ZOOM);
   console.log('[GSI] _loadDetailTiles zoom='+map.getZoom().toFixed(1)+' tileZoom='+GSI_TILE_ZOOM+' tiles='+tiles.length);
@@ -315,56 +185,54 @@ function _loadDetailTiles() {
     console.log('[GSI]   fetch', url);
     fetch(url)
       .then(function(r){
-        console.log('[GSI]   response', key, r.status, r.headers.get('content-type'));
+        console.log('[GSI]   response', key, r.status);
         if(!r.ok) throw new Error(r.status);
-        return r.arrayBuffer();
+        return r.json();
       })
-      .then(function(buf){
-        if (!buf || buf.byteLength === 0) { console.warn('[GSI] empty buffer', key); return; }
-        try { _parseTile(buf, t.z, t.x, t.y); }
-        catch(e) { console.error('[GSI] _parseTile error', key, e.message, e.stack); }
+      .then(function(data){
+        if (!data) { console.warn('[GSI] null response', key); return; }
+        try { _parseTileGeoJSON(data, t.z, t.x, t.y); }
+        catch(e) { console.error('[GSI] parse error', key, e.message, e.stack); }
       })
       .catch(function(e){ console.error('[GSI] tile error', key, e.message); })
       .finally(function(){ _loadingN=Math.max(0,_loadingN-1); _updateGsiStatus(); });
   });
 }
 
-// ArrayBuffer → BldA/SBldA ポリゴンを _gsiDetailLayer に追加
-function _parseTile(buf, tz, tx, ty) {
+// GeoJSON FeatureCollection → ポリゴンを _gsiDetailLayer に追加
+function _parseTileGeoJSON(data, tz, tx, ty) {
   var KEY = tz+'/'+tx+'/'+ty;
-  console.log('[GSI] parseTile', KEY, buf.byteLength+'B');
-
-  var pbf = new _PBFReader(new Uint8Array(buf));
-  var WANT = {BldA:1, SBldA:1};
   var riskHighOnly = document.getElementById('chk-risk-high').checked;
   var showing = document.getElementById('chk-gsi-bldg').checked &&
                 Math.round(map.getZoom()) >= GSI_DETAIL_ZOOM &&
                 map.hasLayer(_gsiDetailLayer);
-  var added = 0;
-  var layerNames = [];
+  var added = 0, skipped = 0;
 
-  pbf.readFields(function(tag, _, pbf) {
-    if (tag !== 3) return;
-    var layer = pbf.readMessage(_readLayerFields, {name:'', extent:4096, feats:[]});
-    layerNames.push(layer.name + '[' + layer.feats.length + ']');
-    if (!WANT[layer.name]) return;
+  if (!data || !data.features || !data.features.length) {
+    console.log('[GSI] tile', KEY, 'features=0');
+    return;
+  }
 
-    var ext = layer.extent || 4096;
-    var polyCount=0, skipType=0, skipGeom=0, skipArea=0;
+  data.features.forEach(function(feat) {
+    if (!feat.geometry) return;
+    var geomType = feat.geometry.type;
+    var polys = geomType === 'Polygon'      ? [feat.geometry.coordinates]
+              : geomType === 'MultiPolygon' ?  feat.geometry.coordinates
+              : null;
+    if (!polys) return;
 
-    layer.feats.forEach(function(feat) {
-      if (feat.type !== 3 || !feat.geom || feat.geom.length===0) { skipType++; return; }
-      var rings = _decodeGeom(feat.geom);
-      if (!rings || !rings[0] || rings[0].length < 3) { skipGeom++; return; }
-      var area = _ringArea(rings[0], tx, ty, tz, ext);
-      if (area <= 0 || area > 100000) { skipArea++; return; }
+    polys.forEach(function(rings) {
+      if (!rings || !rings[0] || rings[0].length < 3) { skipped++; return; }
+      var area = _ringArea(rings[0]);
+      if (area <= 0 || area > 100000) { skipped++; return; }
 
       var cat, color, label;
       if (area >= 100)     { cat='high'; color='#E24B4A'; label='広（100㎡以上）'; }
       else if (area >= 60) { cat='mid';  color='#EF9F27'; label='中（60〜100㎡）'; }
-      else                 { cat='low';  color='#1D9E75'; label='小（60㎡未満）';  }
+      else                 { cat='low';  color='#1D9E75'; label='小（60㎡未満）'; }
 
-      var coords = rings[0].map(function(p){ return _px2ll(tx,ty,tz,p.x,p.y,ext); });
+      // GeoJSON座標は [lng, lat]、LeafletはI [lat, lng] に変換
+      var coords = rings[0].map(function(c){ return [c[1], c[0]]; });
       var cLat=0, cLng=0;
       coords.forEach(function(c){ cLat+=c[0]; cLng+=c[1]; });
       cLat/=coords.length; cLng/=coords.length;
@@ -377,31 +245,11 @@ function _parseTile(buf, tz, tx, ty) {
       _gsiPolygons.push({poly:poly, cat:cat, lat:cLat, lng:cLng});
       if (showing && (cat==='high' || !riskHighOnly)) poly.addTo(_gsiDetailLayer);
       added++;
-      polyCount++;
     });
-
-    console.log('[GSI]   layer', layer.name, 'feats='+layer.feats.length,
-      'poly='+polyCount, 'skipType='+skipType, 'skipGeom='+skipGeom, 'skipArea='+skipArea);
   });
 
-  console.log('[GSI] tile', KEY, 'layers=['+layerNames.join(',')+'] added='+added, 'total='+_gsiPolygons.length);
-
-  // BldA / SBldA 検出結果を明示
-  var foundBldA  = layerNames.some(function(n){ return /^BldA/.test(n); });
-  var foundSBldA = layerNames.some(function(n){ return /^SBldA/.test(n); });
-  if (foundBldA || foundSBldA) {
-    console.log('[GSI] ✓ BldA:' + (foundBldA ? '検出' : '未検出') +
-                ' / SBldA:' + (foundSBldA ? '検出' : '未検出') +
-                ' — tile ' + KEY);
-  } else {
-    var rawNames = layerNames.map(function(n){ return n.replace(/\[\d+\]$/, ''); });
-    console.log('[GSI] ⚠ BldA/SBldA が tile ' + KEY + ' に見つかりません。含まれるレイヤー: ' + JSON.stringify(rawNames));
-  }
-
-  if (added > 0) {
-    _updateGsiStatus();
-    _updateMixedGrid();
-  }
+  console.log('[GSI] tile', KEY, 'features='+data.features.length+' added='+added+' skipped='+skipped+' total='+_gsiPolygons.length);
+  if (added > 0) { _updateGsiStatus(); _updateMixedGrid(); }
 }
 
 function _setGsiStatus(text, color) {
@@ -433,25 +281,16 @@ function _rebuildDetailLayer() {
 
 // ズーム・チェックボックスに応じてレイヤー切替
 function _applyVisibility() {
-  var zoom   = Math.round(map.getZoom());
-  var gsiOn  = document.getElementById('chk-gsi-bldg').checked;
-  console.log('[GSI] _applyVisibility zoom='+zoom+' gsiOn='+gsiOn+' detailZoom='+GSI_DETAIL_ZOOM);
+  var zoom  = Math.round(map.getZoom());
+  var gsiOn = document.getElementById('chk-gsi-bldg').checked;
+  console.log('[GSI] _applyVisibility zoom='+zoom+' gsiOn='+gsiOn);
 
-  _initOverviewVG();
-
-  if (!gsiOn) {
-    if (_gsiOverviewVG && map.hasLayer(_gsiOverviewVG)) map.removeLayer(_gsiOverviewVG);
+  if (!gsiOn || zoom < GSI_DETAIL_ZOOM) {
     if (map.hasLayer(_gsiDetailLayer)) map.removeLayer(_gsiDetailLayer);
-  } else if (zoom >= GSI_DETAIL_ZOOM) {
-    // 詳細モード：面積色分けポリゴン
-    if (_gsiOverviewVG && map.hasLayer(_gsiOverviewVG)) map.removeLayer(_gsiOverviewVG);
+  } else {
     _rebuildDetailLayer();
     if (!map.hasLayer(_gsiDetailLayer)) map.addLayer(_gsiDetailLayer);
     _loadDetailTiles();
-  } else {
-    // 広域モード：VectorGrid（青）
-    if (map.hasLayer(_gsiDetailLayer)) map.removeLayer(_gsiDetailLayer);
-    if (!map.hasLayer(_gsiOverviewVG)) map.addLayer(_gsiOverviewVG);
   }
 
   // 混在グリッド
