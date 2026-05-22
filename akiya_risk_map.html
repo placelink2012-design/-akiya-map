@@ -132,6 +132,8 @@ var OVERPASS_ENDPOINTS = [
 var GSI_DETAIL_ZOOM = 16;
 var MIXED_MIN_COUNT = 5;
 
+console.log('[OSM] 初期設定 endpoints='+OVERPASS_ENDPOINTS.length+' GSI_DETAIL_ZOOM='+GSI_DETAIL_ZOOM);
+
 var _gsiDetailLayer = L.layerGroup();
 var _gsiPolygons    = [];
 var _bldgDoneIds    = {};
@@ -169,7 +171,7 @@ function _fetchOverpass(query, idx) {
     headers: {'Content-Type': 'application/x-www-form-urlencoded'},
     body: 'data=' + encodeURIComponent(query)
   }).then(function(r) {
-    console.log('[OSM] status', r.status, url);
+    console.log('[OSM] status', r.status, r.headers.get('content-type'), url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
   }).catch(function(e) {
@@ -189,7 +191,8 @@ function _loadDetailTiles() {
     var query = '[out:json][timeout:25];way["building"](' + s + ',' + w + ',' + n + ',' + e + ');out geom;';
     _loadingN++;
     _setGsiStatus('読み込み中...');
-    console.log('[OSM] query bounds', s, w, n, e);
+    console.log('[OSM] _loadDetailTiles: zoom='+map.getZoom().toFixed(1)+' bounds S='+s+' W='+w+' N='+n+' E='+e);
+    console.log('[OSM] query:', query);
     _fetchOverpass(query, 0)
       .then(function(data) {
         try { _parseOverpass(data); }
@@ -202,7 +205,11 @@ function _loadDetailTiles() {
 
 // Overpass JSON → _gsiDetailLayer にポリゴン追加
 function _parseOverpass(data) {
-  if (!data || !data.elements) return;
+  if (!data || !data.elements) {
+    console.warn('[OSM] _parseOverpass: data or data.elements が null/undefined', data);
+    return;
+  }
+  console.log('[OSM] _parseOverpass: elements.length='+data.elements.length+' version='+data.version);
   var riskHighOnly = document.getElementById('chk-risk-high').checked;
   var showing = document.getElementById('chk-gsi-bldg').checked &&
                 Math.round(map.getZoom()) >= GSI_DETAIL_ZOOM &&
@@ -238,7 +245,10 @@ function _parseOverpass(data) {
     added++;
   });
 
-  console.log('[OSM] added=' + added + ' dup=' + dup + ' skipped=' + skipped + ' total=' + _gsiPolygons.length);
+  console.log('[OSM] added='+added+' dup='+dup+' skipped='+skipped+' total='+_gsiPolygons.length);
+  if (added === 0 && data.elements.length > 0) {
+    console.warn('[OSM] !! Overpassから'+data.elements.length+'件取得したが追加0 — way/geom/area条件を確認');
+  }
   if (added > 0) { _updateGsiStatus(); _updateMixedGrid(); }
 }
 
@@ -275,9 +285,14 @@ function _applyVisibility() {
   var gsiOn = document.getElementById('chk-gsi-bldg').checked;
   console.log('[GSI] _applyVisibility zoom='+zoom+' gsiOn='+gsiOn);
 
-  if (!gsiOn || zoom < GSI_DETAIL_ZOOM) {
+  if (!gsiOn) {
+    console.log('[OSM] 建物レイヤーOFF');
+    if (map.hasLayer(_gsiDetailLayer)) map.removeLayer(_gsiDetailLayer);
+  } else if (zoom < GSI_DETAIL_ZOOM) {
+    console.log('[OSM] ズーム不足 (zoom='+zoom+' < '+GSI_DETAIL_ZOOM+') → 建物非表示');
     if (map.hasLayer(_gsiDetailLayer)) map.removeLayer(_gsiDetailLayer);
   } else {
+    console.log('[OSM] 詳細モード (zoom='+zoom+') → Overpass取得開始');
     _rebuildDetailLayer();
     if (!map.hasLayer(_gsiDetailLayer)) map.addLayer(_gsiDetailLayer);
     _loadDetailTiles();
